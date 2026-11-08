@@ -1,0 +1,1993 @@
+import { useState, useEffect, useCallback, useRef, startTransition, useMemo, memo } from 'react'
+import { Activity, Point, UserSegment, TERRAIN_FACTORS, CLIMB_DIFFICULTIES, PredictionResult } from '../../types'
+import { pointsAPI, segmentsAPI, userSegmentsAPI, predictionsAPI } from '../../services/api'
+import ActivityMap from '../map/ActivityMap'
+import ElevationChart from '../charts/ElevationChart'
+import SpeedChart from '../charts/SpeedChart'
+import ActivityMetadataForm from './ActivityMetadataForm'
+import PredictTimePanel from './PredictTimePanel'
+import PredictionDistributionChart from '../charts/analysis/PredictionDistributionChart'
+import PredictionCumulativeChart from '../charts/analysis/PredictionCumulativeChart'
+import PredictionTimeOfDayChart from '../charts/analysis/PredictionTimeOfDayChart'
+import { formatDistance } from '../../utils/formatters'
+import { useAuth } from '../../context/AuthContext'
+
+// Predict Time plots: shared time-of-day window logic for summit/finish coloring + subtitles
+const AFTERNOON_START_MIN = 12 * 60
+const AFTERNOON_END_MIN = 17 * 60
+
+const isAfternoonWindow = (m: number) => m >= AFTERNOON_START_MIN && m < AFTERNOON_END_MIN
+
+const isDaylight = (m: number, sunrise: number | null, sunset: number | null) =>
+  sunrise != null && sunset != null && m >= sunrise && m < sunset
+
+const percentMatching = (values: number[], predicate: (m: number) => boolean): number | null =>
+  values.length === 0 ? null : Math.round((values.filter(predicate).length / values.length) * 100)
+
+// Helper function to get segment colors
+const getSegmentColors = (segmentType: 'climb' | 'descent' | 'flat' | 'rest') => {
+  switch (segmentType) {
+    case 'climb':
+      return {
+        bg: 'bg-orange-50',
+        border: 'border-orange-400',
+        ring: 'ring-orange-400',
+        highlight: '#ea580c', // orange-600
+        leftBar: 'border-l-orange-600',
+      }
+    case 'descent':
+      return {
+        bg: 'bg-blue-50',
+        border: 'border-blue-400',
+        ring: 'ring-blue-400',
+        highlight: '#2563eb', // blue-600
+        leftBar: 'border-l-blue-600',
+      }
+    case 'rest':
+      return {
+        bg: 'bg-green-50',
+        border: 'border-green-400',
+        ring: 'ring-green-400',
+        highlight: '#16a34a', // green-600
+        leftBar: 'border-l-green-600',
+      }
+    case 'flat':
+      return {
+        bg: 'bg-gray-50',
+        border: 'border-gray-400',
+        ring: 'ring-gray-400',
+        highlight: '#6b7280', // gray-500
+        leftBar: 'border-l-gray-500',
+      }
+  }
+}
+
+// Helper function to calculate segment metadata
+const calculateSegmentMetadata = (points: Point[], startTime: string, endTime: string) => {
+  const segmentPoints = points.filter(p => p.time >= startTime && p.time <= endTime)
+
+  if (segmentPoints.length < 2) {
+    return { distance: 0, duration: 0, elevationChange: 0 }
+  }
+
+  // Calculate distance using haversine
+  let totalDistance = 0
+  for (let i = 0; i < segmentPoints.length - 1; i++) {
+    const p1 = segmentPoints[i]
+    const p2 = segmentPoints[i + 1]
+    const R = 3959 // Earth's radius in miles
+    const dLat = (p2.lat - p1.lat) * Math.PI / 180
+    const dLon = (p2.lon - p1.lon) * Math.PI / 180
+    const a =
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) *
+      Math.sin(dLon/2) * Math.sin(dLon/2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+    totalDistance += R * c
+  }
+
+  // Calculate duration
+  const duration = (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60) // minutes
+
+  // Calculate net elevation change
+  const elevationChange = segmentPoints[segmentPoints.length - 1].elevation_ft - segmentPoints[0].elevation_ft
+
+  return { distance: totalDistance, duration, elevationChange }
+}
+
+// Accordion section component
+const AccordionSection = memo(({
+  id,
+  title,
+  isOpen,
+  onToggle,
+  children,
+  expandContent = false
+}: {
+  id: string
+  title: string
+  isOpen: boolean
+  onToggle: () => void
+  children: React.ReactNode
+  expandContent?: boolean
+}) => {
+  return (
+    <div className={`border-b border-gray-200 last:border-b-0 ${isOpen && expandContent ? 'flex flex-col flex-1' : ''}`}>
+      <button
+        onClick={onToggle}
+        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-gray-50 transition-colors"
+      >
+        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+        <svg
+          className={`w-5 h-5 text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {isOpen && (
+        <div className={`px-4 pb-4 ${expandContent ? 'flex-1 overflow-auto' : ''}`}>
+          {children}
+        </div>
+      )}
+    </div>
+  )
+})
+
+// Inline segment editor (for both create and edit)
+const SegmentEditor = memo(({
+  activity,
+  timeRange,
+  points,
+  editingSegment,
+  onSave,
+  onSaveAndContinue,
+  onCancel,
+  onDelete,
+  onUpdateTimeRange,
+  onSplit,
+  onMergeWithPrior,
+  onMergeWithNext,
+  onAdjustStart,
+  onAdjustEnd,
+  isFirstSegment,
+  isLastSegment,
+  onValuesChange,
+  isInSplitMode,
+  isInAdjustStartMode,
+  isInAdjustEndMode
+}: {
+  activity: Activity
+  timeRange: { start: string; end: string } | null
+  points: Point[]
+  editingSegment?: UserSegment
+  onSave: (data: {
+    timeRange: { start: string; end: string },
+    terrainType: 'rest' | 'non-technical' | 'technical',
+    difficulty?: string,
+    pitchCount?: number
+  }) => void
+  onSaveAndContinue?: (data: {
+    timeRange: { start: string; end: string },
+    terrainType: 'rest' | 'non-technical' | 'technical',
+    difficulty?: string,
+    pitchCount?: number
+  }) => void
+  onCancel: () => void
+  onDelete?: () => void
+  onUpdateTimeRange?: (timeRange: { start: string; end: string }) => void
+  onSplit?: () => void
+  onMergeWithPrior?: () => void
+  onMergeWithNext?: () => void
+  onAdjustStart?: () => void
+  onAdjustEnd?: () => void
+  isFirstSegment?: boolean
+  isLastSegment?: boolean
+  onValuesChange?: (values: {
+    terrainType: 'rest' | 'non-technical' | 'technical'
+    difficulty?: string
+    pitchCount?: number
+    terrainFactor?: number
+    packWeightOverride?: string
+  }) => void
+  isInSplitMode?: boolean
+  isInAdjustStartMode?: boolean
+  isInAdjustEndMode?: boolean
+}) => {
+  const { isAdmin } = useAuth()
+  const [terrainType, setTerrainType] = useState<'rest' | 'non-technical' | 'technical'>(
+    editingSegment
+      ? editingSegment.segment_type === 'rest'
+        ? 'rest'
+        : editingSegment.is_technical
+        ? 'technical'
+        : 'non-technical'
+      : 'non-technical'
+  )
+
+  // Technical climb metadata
+  const [difficulty, setDifficulty] = useState(editingSegment?.difficulty || '3rd Class')
+  const [pitchCount, setPitchCount] = useState<number>(editingSegment?.pitch_count || 0)
+
+  // Pandolf equation inputs
+  const [terrainFactor, setTerrainFactor] = useState<number>(editingSegment?.terrain_factor ?? activity.terrain_factor ?? 1.1)
+  const [packWeightOverride, setPackWeightOverride] = useState<string>(editingSegment?.pack_weight_override_lbs?.toString() || '')
+
+  // Initialize time range from editing segment if present
+  const effectiveTimeRange = timeRange || (editingSegment ? { start: editingSegment.start_time, end: editingSegment.end_time } : null)
+
+  // Notify parent when values change (for auto-save on close)
+  useEffect(() => {
+    if (editingSegment && onValuesChange) {
+      onValuesChange({ terrainType, difficulty, pitchCount, terrainFactor, packWeightOverride })
+    }
+  }, [terrainType, difficulty, pitchCount, terrainFactor, packWeightOverride, editingSegment, onValuesChange])
+
+  // Calculate segment metadata - MUST be called before any conditional returns
+  const metadata = useMemo(() => {
+    if (!effectiveTimeRange) return null
+    try {
+      if (!effectiveTimeRange) return null
+      if (!points || points.length === 0) return null
+
+      // Filter points in time range
+      const segmentPoints = points.filter(p =>
+        p && p.time && p.time >= effectiveTimeRange.start && p.time <= effectiveTimeRange.end
+      )
+
+      if (segmentPoints.length < 2) {
+        return null
+      }
+
+    // Calculate distance
+    let totalDistance = 0
+    for (let i = 0; i < segmentPoints.length - 1; i++) {
+      const p1 = segmentPoints[i]
+      const p2 = segmentPoints[i + 1]
+      const R = 3959 // Earth's radius in miles
+      const dLat = (p2.lat - p1.lat) * Math.PI / 180
+      const dLon = (p2.lon - p1.lon) * Math.PI / 180
+      const a =
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) *
+        Math.sin(dLon/2) * Math.sin(dLon/2)
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+      totalDistance += R * c
+    }
+
+    // Calculate elevation change
+    const elevationChange = segmentPoints[segmentPoints.length - 1].elevation_ft - segmentPoints[0].elevation_ft
+    let elevationGain = 0
+    let elevationLoss = 0
+    for (let i = 0; i < segmentPoints.length - 1; i++) {
+      const delta = segmentPoints[i + 1].elevation_ft - segmentPoints[i].elevation_ft
+      if (delta > 0) elevationGain += delta
+      else elevationLoss += Math.abs(delta)
+    }
+
+    // Calculate duration and speed
+    const startTime = new Date(segmentPoints[0].time).getTime()
+    const endTime = new Date(segmentPoints[segmentPoints.length - 1].time).getTime()
+    const durationHours = (endTime - startTime) / (1000 * 60 * 60)
+    const avgSpeed = durationHours > 0 ? totalDistance / durationHours : 0
+
+    // Auto-detect segment type based on elevation
+    let segmentType: 'climb' | 'descent' | 'flat'
+    if (elevationGain > 50 && elevationGain > elevationLoss * 1.5) {
+      segmentType = 'climb'
+    } else if (elevationLoss > 50 && elevationLoss > elevationGain * 1.5) {
+      segmentType = 'descent'
+    } else {
+      segmentType = 'flat'
+    }
+
+    // Calculate average % grade
+    const horizontalDistFt = totalDistance * 5280 // convert miles to feet
+    const avgGrade = horizontalDistFt > 0 ? (elevationChange / horizontalDistFt) * 100 : 0
+
+    // Calculate average climb rate (ft/hour)
+    const durationMinutes = durationHours * 60
+    const climbRate = durationMinutes > 0 ? (elevationChange / durationMinutes) * 60 : 0
+
+    // Calculate % inactive
+    const inactivePoints = segmentPoints.filter(p => p.is_inactive).length
+    const percentInactive = segmentPoints.length > 0 ? (inactivePoints / segmentPoints.length) * 100 : 0
+
+      return {
+        distance: totalDistance,
+        elevationGain,
+        elevationLoss,
+        elevationChange,
+        avgSpeed,
+        segmentType,
+        duration: durationMinutes,
+        avgGrade,
+        climbRate,
+        percentInactive
+      }
+    } catch (err) {
+      console.error('Error calculating segment metadata:', err)
+      return null
+    }
+  }, [timeRange, editingSegment?.start_time, editingSegment?.end_time, points])
+
+  // Early return if no time range selected yet
+  if (!effectiveTimeRange) {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+        <p className="text-sm text-blue-800 font-medium">Select Points</p>
+        <p className="text-xs text-blue-600 mt-1">Click start point, then end point on either chart below</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Warning for insufficient points */}
+      {!metadata && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-3">
+          <p className="text-sm text-yellow-800 font-medium">⚠️ Not enough points in selected range</p>
+          <p className="text-xs text-yellow-600 mt-1">Statistics unavailable, but you can still use segment actions below</p>
+        </div>
+      )}
+
+      {/* Actions */}
+      {!editingSegment ? (
+        // Creating new segment - show Save buttons
+        <div className="space-y-2">
+          <button
+            onClick={() => onSave({
+              timeRange: effectiveTimeRange,
+              terrainType,
+              difficulty: difficulty || undefined,
+              pitchCount: pitchCount > 0 ? pitchCount : undefined
+            })}
+            className={`w-full px-4 py-2 bg-accent-600 text-white rounded-md font-medium hover:bg-accent-700 text-sm ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Save
+          </button>
+
+          {onSaveAndContinue && (
+            <button
+              onClick={() => onSaveAndContinue({
+                timeRange: effectiveTimeRange,
+                terrainType,
+                difficulty: difficulty || undefined,
+                pitchCount: pitchCount > 0 ? pitchCount : undefined
+              })}
+              className={`w-full px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 text-sm ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              Save and Continue
+            </button>
+          )}
+        </div>
+      ) : (
+        // Editing existing segment - show 5 action buttons
+        <div className="space-y-2">
+          {/* Split Segment - full width */}
+          {onSplit && (
+            <button
+              onClick={onSplit}
+              className={`w-full px-3 py-2 rounded-md font-medium text-sm ${
+                isInSplitMode
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+              } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              Split Segment
+            </button>
+          )}
+
+          {/* Merge buttons - same row */}
+          <div className="grid grid-cols-2 gap-2">
+            {onMergeWithPrior && (
+              <button
+                onClick={onMergeWithPrior}
+                disabled={isFirstSegment}
+                className={`px-3 py-2 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 text-sm disabled:opacity-50 disabled:cursor-not-allowed ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Merge with Prior
+              </button>
+            )}
+            {onMergeWithNext && (
+              <button
+                onClick={onMergeWithNext}
+                disabled={isLastSegment}
+                className={`px-3 py-2 bg-gray-200 text-gray-800 rounded-md font-medium hover:bg-gray-300 text-sm disabled:opacity-50 disabled:cursor-not-allowed ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Merge with Next
+              </button>
+            )}
+          </div>
+
+          {/* Adjust buttons - same row */}
+          <div className="grid grid-cols-2 gap-2">
+            {onAdjustStart && (
+              <button
+                onClick={onAdjustStart}
+                disabled={isFirstSegment}
+                className={`px-3 py-2 rounded-md font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isInAdjustStartMode
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Adjust Start
+              </button>
+            )}
+            {onAdjustEnd && (
+              <button
+                onClick={onAdjustEnd}
+                disabled={isLastSegment}
+                className={`px-3 py-2 rounded-md font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isInAdjustEndMode
+                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                    : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                Adjust End
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Terrain Type Slider */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">Terrain Type</label>
+        <input
+          type="range"
+          min="0"
+          max="2"
+          step="1"
+          value={terrainType === 'rest' ? 0 : terrainType === 'non-technical' ? 1 : 2}
+          onChange={(e) => {
+            const val = Number(e.target.value)
+            setTerrainType(val === 0 ? 'rest' : val === 1 ? 'non-technical' : 'technical')
+          }}
+          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+        />
+        <div className="flex justify-between text-xs text-gray-600 mt-2">
+          <span className={terrainType === 'rest' ? 'font-semibold text-gray-900' : ''}>Rest</span>
+          <span className={terrainType === 'non-technical' ? 'font-semibold text-gray-900' : ''}>Non-technical</span>
+          <span className={terrainType === 'technical' ? 'font-semibold text-gray-900' : ''}>Technical</span>
+        </div>
+      </div>
+
+      {/* Terrain Factor - only for non-technical segments */}
+      {terrainType === 'non-technical' && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Terrain Factor</label>
+          <select
+            value={terrainFactor}
+            onChange={(e) => setTerrainFactor(Number(e.target.value))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
+          >
+            {Object.entries(TERRAIN_FACTORS).map(([name, value]) => (
+              <option key={name} value={value}>
+                {name} ({value})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            Affects energy expenditure calculation
+          </p>
+        </div>
+      )}
+
+      {/* Pack Weight Override - only for non-technical segments */}
+      {terrainType === 'non-technical' && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Pack Weight Override (lbs)</label>
+          <input
+            type="number"
+            value={packWeightOverride}
+            onChange={(e) => setPackWeightOverride(e.target.value)}
+            placeholder={activity.weight_carried_lbs ? `Default: ${activity.weight_carried_lbs} lbs` : 'No default set'}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
+          />
+        </div>
+      )}
+
+      {/* Technical Climb Metadata - only shown for technical climbs */}
+      {metadata && metadata.segmentType === 'climb' && terrainType === 'technical' && (
+        <div className="space-y-3 pt-3 border-t border-gray-200">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Max Difficulty</label>
+            <select
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
+            >
+              {CLIMB_DIFFICULTIES.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Number of Pitches</label>
+            <input
+              type="number"
+              min="0"
+              value={pitchCount}
+              onChange={(e) => setPitchCount(Number(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent-500"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Segment Statistics Summary */}
+      {metadata && (
+        <div className="bg-gray-50 rounded-md p-3 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">Ave. % Grade:</span>
+            <span className="font-medium text-gray-900">{metadata.avgGrade.toFixed(1)}%</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">Ave Climb Rate:</span>
+            <span className="font-medium text-gray-900">{Math.round(metadata.climbRate)} ft/hr</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">Distance:</span>
+            <span className="font-medium text-gray-900">{metadata.distance.toFixed(2)} mi</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">Duration:</span>
+            <span className="font-medium text-gray-900">{Math.round(metadata.duration)} min</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">Elevation Gain:</span>
+            <span className="font-medium text-gray-900">{Math.round(metadata.elevationGain)} ft</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">Elevation Loss:</span>
+            <span className="font-medium text-gray-900">{Math.round(metadata.elevationLoss)} ft</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">Avg Speed:</span>
+            <span className="font-medium text-gray-900">{metadata.avgSpeed.toFixed(1)} mph</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-600">% Inactive:</span>
+            <span className="font-medium text-gray-900">{metadata.percentInactive.toFixed(0)}%</span>
+          </div>
+
+          {/* Energy expenditure stats */}
+          {editingSegment && terrainType === 'technical' && (
+            <div className="text-sm text-gray-500 italic pt-2 border-t border-gray-200">
+              Energy not calculated for technical segments
+            </div>
+          )}
+          {editingSegment && terrainType !== 'technical' && editingSegment.energy_calculation_error && (
+            <div className="text-sm text-amber-600 pt-2 border-t border-gray-200">
+              {editingSegment.energy_calculation_error}
+            </div>
+          )}
+          {editingSegment && terrainType !== 'technical' && !editingSegment.energy_calculation_error && (
+            <>
+              {editingSegment.avg_power_watts && (
+                <div className="flex justify-between text-sm pt-2 border-t border-gray-200">
+                  <span className="text-gray-600">Avg Power:</span>
+                  <span className="font-medium text-gray-900">{Math.round(editingSegment.avg_power_watts)} W</span>
+                </div>
+              )}
+              {editingSegment.total_energy_kcal && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Total Energy:</span>
+                  <span className="font-medium text-gray-900">{Math.round(editingSegment.total_energy_kcal)} kcal</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+})
+
+// View Segments component
+const ViewSegments = memo(({
+  segments,
+  points,
+  selectedSegmentId,
+  editingSegmentId,
+  creatingSegment,
+  segmentEditor,
+  onGenerateSegments,
+  generatingSegments,
+  onDeleteSegment,
+  onSelectSegment,
+  onRepairAdjacency,
+  repairingAdjacency
+}: {
+  segments: UserSegment[]
+  points: Point[]
+  selectedSegmentId: number | null
+  editingSegmentId: number | null
+  creatingSegment: boolean
+  segmentEditor: React.ReactNode
+  onGenerateSegments: () => void
+  generatingSegments: boolean
+  onDeleteSegment: (id: number) => void
+  onSelectSegment: (id: number) => void
+  onRepairAdjacency: () => void
+  repairingAdjacency: boolean
+}) => {
+  const { isAdmin } = useAuth()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [showTopFade, setShowTopFade] = useState(false)
+  const [showBottomFade, setShowBottomFade] = useState(true)
+
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
+    setShowTopFade(scrollTop > 0)
+    setShowBottomFade(scrollTop + clientHeight < scrollHeight - 1)
+  }, [])
+
+  useEffect(() => {
+    handleScroll() // Check initial state
+  }, [segments, handleScroll])
+
+  return (
+    <div className="flex flex-col h-full space-y-3">
+      {/* New Segment Editor (shown when creating) */}
+      {creatingSegment && (
+        <div className="border border-blue-300 rounded-md p-3 bg-blue-50">
+          {segmentEditor}
+        </div>
+      )}
+
+      {/* Segments List */}
+      {segments.length > 0 ? (
+        <div className="flex-1 relative min-h-0">
+          {/* Fade overlay at top */}
+          {showTopFade && (
+            <div className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-white to-transparent pointer-events-none z-10" />
+          )}
+
+          {/* Scrollable segments */}
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="absolute inset-0 space-y-2 overflow-y-auto pr-2"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
+            <style>{`
+              div.absolute.inset-0.space-y-2::-webkit-scrollbar {
+                display: none;
+              }
+            `}</style>
+            {segments.map((segment) => {
+              const isEditing = editingSegmentId === segment.id
+              const isHighlighted = selectedSegmentId === segment.id && !isEditing
+              const colors = getSegmentColors(segment.segment_type)
+              const metadata = calculateSegmentMetadata(points, segment.start_time, segment.end_time)
+
+              return (
+                <div
+                  key={segment.id}
+                  className={`border-l-4 ${colors.leftBar} pl-3 py-2 transition-all ${
+                    isEditing || isHighlighted ? 'bg-gray-50' : ''
+                  }`}
+                >
+                  {/* Segment Header - always visible */}
+                  <div
+                    onClick={() => onSelectSegment(segment.id)}
+                    className="cursor-pointer hover:opacity-75 transition-opacity"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-semibold text-gray-900 uppercase">
+                            {segment.segment_type}
+                          </span>
+                          {segment.is_technical && (
+                            <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded">
+                              Technical
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          <div className="flex gap-3">
+                            <span>{metadata.distance.toFixed(2)} mi</span>
+                            <span>{Math.round(metadata.duration)} min</span>
+                            <span>{metadata.elevationChange > 0 ? '+' : ''}{Math.round(metadata.elevationChange)} ft</span>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Expand/collapse indicator */}
+                      <svg
+                        className={`w-4 h-4 text-gray-500 transition-transform flex-shrink-0 ml-2 ${isEditing ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Editor - shown when segment is being edited */}
+                  {isEditing && (
+                    <div className="p-3">
+                      {segmentEditor}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Fade overlay at bottom */}
+          {showBottomFade && (
+            <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white to-transparent pointer-events-none z-10" />
+          )}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">No segments yet. Create your first segment by drawing on the charts below.</p>
+      )}
+
+      {/* Action Buttons */}
+      {!creatingSegment && (
+        <div className={`flex gap-2 ${segments.length > 0 ? 'flex-row' : 'flex-col'}`}>
+          <button
+            onClick={onGenerateSegments}
+            disabled={generatingSegments}
+            className={`flex-1 px-4 py-2 bg-gray-600 text-white rounded-md font-medium hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            {generatingSegments ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Generating...
+              </>
+            ) : (
+              segments.length > 0 ? 'Re-generate' : 'Generate Segments'
+            )}
+          </button>
+
+          {segments.length > 0 && (
+            <button
+              onClick={onRepairAdjacency}
+              disabled={repairingAdjacency}
+              className={`flex-1 px-4 py-2 bg-gray-600 text-white rounded-md font-medium hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {repairingAdjacency ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Repairing...
+                </>
+              ) : (
+                'Fix Adjacency'
+              )}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+})
+
+// Separate component for edit controls to isolate re-renders
+const EditControls = memo(({
+  selectedPointIndices,
+  removing,
+  onRemoveSelectedPoints,
+  onClearSelection,
+  onRestoreAll,
+  pointSpeeds,
+  onApplyMaxSpeed
+}: {
+  selectedPointIndices: number[]
+  removing: boolean
+  onRemoveSelectedPoints: () => void
+  onClearSelection: () => void
+  onRestoreAll: () => void
+  pointSpeeds: number[]
+  onApplyMaxSpeed: (threshold: number) => void
+}) => {
+  const { isAdmin } = useAuth()
+  const [sliderSpeed, setSliderSpeed] = useState<number>(20)
+  const [maxSpeed, setMaxSpeed] = useState<number>(20)
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  const handleSliderChange = (value: number) => {
+    setSliderSpeed(value)
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      setMaxSpeed(value)
+    }, 150)
+  }
+
+  const pointsAboveMaxSpeed = useMemo(() => {
+    return pointSpeeds.filter(s => s > maxSpeed).length
+  }, [pointSpeeds, maxSpeed])
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-3">
+        <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Max Speed: {sliderSpeed} mph
+            </label>
+            <input
+              type="range"
+              min="1"
+              max="30"
+              step="0.5"
+              value={sliderSpeed}
+              onChange={(e) => handleSliderChange(Number(e.target.value))}
+              className="w-full h-2 bg-steel-200 rounded-lg appearance-none cursor-pointer accent-steel-600"
+            />
+            <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <span>1 mph</span>
+              <span>30 mph</span>
+            </div>
+            <p className="text-xs text-gray-600 text-center mt-2">
+              {pointsAboveMaxSpeed} point{pointsAboveMaxSpeed !== 1 ? 's' : ''} above threshold
+            </p>
+          </div>
+          <button
+            onClick={() => onApplyMaxSpeed(maxSpeed)}
+            className="w-full px-4 py-2 bg-steel-400 text-white rounded-md font-medium hover:bg-steel-500"
+          >
+            Mark Points Above Max Speed
+          </button>
+        </div>
+
+      {selectedPointIndices.length > 0 && (
+        <div className="space-y-2">
+          <button
+            onClick={onClearSelection}
+            className="w-full px-4 py-2 bg-steel-400 text-white rounded-md font-medium hover:bg-steel-500"
+          >
+            Clear Selection
+          </button>
+          <button
+            onClick={onRemoveSelectedPoints}
+            disabled={removing}
+            className={`w-full px-4 py-2 bg-primary-700 text-white rounded-md font-medium hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            {removing ? 'Removing...' : `Remove ${selectedPointIndices.length} Point${selectedPointIndices.length > 1 ? 's' : ''}`}
+          </button>
+          <p className="text-xs text-gray-600 text-center">
+            {selectedPointIndices.length} point{selectedPointIndices.length > 1 ? 's' : ''} selected
+          </p>
+        </div>
+      )}
+
+      {selectedPointIndices.length === 0 && (
+        <p className="text-xs text-gray-500 text-center">
+          Click points to select, or Shift+drag on map for box selection
+        </p>
+      )}
+
+      <button
+        onClick={onRestoreAll}
+        disabled={removing}
+        className={`w-full px-4 py-2 bg-gray-400 text-white rounded-md font-medium hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+      >
+        {removing ? 'Restoring...' : 'Restore Original Waypoints'}
+      </button>
+    </div>
+  )
+})
+
+interface ActivityEditorProps {
+  activity: Activity
+  onActivityUpdated?: () => void
+  onDeleted?: () => void
+}
+
+function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEditorProps) {
+  const { isAdmin } = useAuth()
+  const [points, setPoints] = useState<Point[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [editMode, setEditMode] = useState(false)
+  const [selectedPointIndices, setSelectedPointIndices] = useState<number[]>([])
+  const [removing, setRemoving] = useState(false)
+  const [activePanel, setActivePanel] = useState<'metadata' | 'waypoints' | 'segments' | 'predict' | null>('metadata')
+  const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null)
+
+  // Load the most recently saved prediction (if any) so the distributions/charts
+  // are already there when the user opens this activity, without needing to
+  // click "Predict Time" again.
+  useEffect(() => {
+    predictionsAPI.getSaved(activity.activity_id).then((saved) => {
+      if (saved) {
+        setPredictionResult((current) => (current === null ? saved : current))
+      }
+    }).catch((err) => console.error('Failed to load saved prediction:', err))
+  }, [activity.activity_id])
+
+  const sunriseMin = predictionResult?.sunrise_time_of_day_min ?? null
+  const sunsetMin = predictionResult?.sunset_time_of_day_min ?? null
+  const summitOutsideAfternoonPct = useMemo(
+    () => percentMatching(predictionResult?.summit_time_of_day_min ?? [], (m) => !isAfternoonWindow(m)),
+    [predictionResult?.summit_time_of_day_min]
+  )
+  const finishDaylightPct = useMemo(
+    () => percentMatching(predictionResult?.finish_time_of_day_min ?? [], (m) => isDaylight(m, sunriseMin, sunsetMin)),
+    [predictionResult?.finish_time_of_day_min, sunriseMin, sunsetMin]
+  )
+
+  // Segment creation/editing state
+  const [creatingSegment, setCreatingSegment] = useState(false)
+  const [editingSegmentId, setEditingSegmentId] = useState<number | null>(null)
+  const [segmentTimeRange, setSegmentTimeRange] = useState<{ start: string; end: string } | null>(null)
+  const [userSegments, setUserSegments] = useState<UserSegment[]>([])
+  const [selectedSegmentId, setSelectedSegmentId] = useState<number | null>(null)
+  const [editingMode, setEditingMode] = useState<
+    | null
+    | { type: 'split', segmentId: number }
+    | { type: 'adjust-start', segmentId: number }
+    | { type: 'adjust-end', segmentId: number }
+  >(null)
+  const [currentEditingValues, setCurrentEditingValues] = useState<{
+    terrainType: 'rest' | 'non-technical' | 'technical'
+    difficulty?: string
+    pitchCount?: number
+    terrainFactor?: number
+    packWeightOverride?: string
+  } | null>(null)
+  const [generatingSegments, setGeneratingSegments] = useState(false)
+  const [repairingAdjacency, setRepairingAdjacency] = useState(false)
+
+  // Auto-enter edit mode when Clean Waypoints panel is opened
+  useEffect(() => {
+    const shouldBeInEditMode = activePanel === 'waypoints'
+    if (editMode !== shouldBeInEditMode) {
+      setEditMode(shouldBeInEditMode)
+      setSelectedPointIndices([])  // Clear selection when toggling
+    }
+  }, [activePanel])
+
+  // Clear segment selection and editing state when leaving segments panel
+  useEffect(() => {
+    if (activePanel !== 'segments') {
+      setSelectedSegmentId(null)
+      setEditingSegmentId(null)
+      setCreatingSegment(false)
+      setSegmentTimeRange(null)
+    }
+  }, [activePanel])
+
+  // Calculate chart domain based on editing mode
+  const chartDomain = useMemo<[number | string, number | string]>(() => {
+    if (!editingMode) return ['dataMin', 'dataMax']
+
+    const segment = userSegments.find(s => s.id === editingMode.segmentId)
+    if (!segment) return ['dataMin', 'dataMax']
+
+    if (editingMode.type === 'split') {
+      // Show only current segment
+      return [
+        new Date(segment.start_time).getTime(),
+        new Date(segment.end_time).getTime()
+      ]
+    }
+
+    if (editingMode.type === 'adjust-start') {
+      // Show current segment + previous segment
+      const prevSegment = userSegments
+        .filter(s => s.end_time === segment.start_time)
+        .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())[0]
+
+      if (prevSegment) {
+        return [
+          new Date(prevSegment.start_time).getTime(),
+          new Date(segment.end_time).getTime()
+        ]
+      }
+    }
+
+    if (editingMode.type === 'adjust-end') {
+      // Show current segment + next segment
+      const nextSegment = userSegments
+        .filter(s => s.start_time === segment.end_time)
+        .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())[0]
+
+      if (nextSegment) {
+        return [
+          new Date(segment.start_time).getTime(),
+          new Date(nextSegment.end_time).getTime()
+        ]
+      }
+    }
+
+    return ['dataMin', 'dataMax']
+  }, [editingMode, userSegments])
+
+  useEffect(() => {
+    fetchActivityData()
+    fetchUserSegments()
+  }, [activity.activity_id, editMode])  // Re-fetch when edit mode changes
+
+  const fetchUserSegments = async () => {
+    try {
+      const segments = await userSegmentsAPI.list(activity.activity_id)
+      setUserSegments(segments)
+      console.log('Fetched user segments:', segments)
+    } catch (err) {
+      console.error('Error fetching user segments:', err)
+    }
+  }
+
+  const fetchActivityData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      console.log('Fetching points with include_removed=false')
+
+      // In edit mode, fetch ALL points (no decimation) to prevent re-sampling issues
+      // In normal mode, use decimated points for performance
+      const pointsData = editMode
+        ? await pointsAPI.list(activity.activity_id, false)
+        : await pointsAPI.getDecimated(activity.activity_id, 1500, false)
+
+      console.log('Fetched points:', pointsData.length, 'points', editMode ? '(all)' : '(decimated)')
+      console.log('First point time:', pointsData[0]?.time)
+      console.log('Last point time:', pointsData[pointsData.length - 1]?.time)
+
+      setPoints(pointsData)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load activity data')
+      console.error('Error loading activity data:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRemoveSelectedPoints = async () => {
+    if (selectedPointIndices.length === 0) return
+
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+
+    try {
+      setRemoving(true)
+
+      console.log(`Removing ${selectedPointIndices.length} selected points`)
+
+      // Get all selected points
+      const selectedPoints = selectedPointIndices.map(i => points[i]).filter(p => p)
+
+      // Remove each point individually (same start and end time)
+      for (const point of selectedPoints) {
+        await pointsAPI.remove(activity.activity_id, {
+          time_range: {
+            start: point.time,
+            end: point.time,
+          },
+        })
+      }
+
+      console.log(`Removed ${selectedPoints.length} points`)
+
+      // Recalculate segments
+      await segmentsAPI.recalculate(activity.activity_id)
+
+      // Refresh points data
+      await fetchActivityData()
+
+      // Clear selection
+      setSelectedPointIndices([])
+
+      console.log('Points removed successfully!')
+    } catch (err) {
+      console.error('Error removing points:', err)
+      alert(`Failed to remove points: ${err}`)
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  const handleRestoreAll = async () => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+
+    if (!confirm('Restore all removed waypoints? This will undo all your edits.')) {
+      return
+    }
+
+    try {
+      setRemoving(true)
+
+      console.log('Restoring all removed points')
+
+      // Call restore with empty array to restore ALL removed points
+      await pointsAPI.restore(activity.activity_id, { point_ids: [] })
+
+      // Recalculate segments
+      await segmentsAPI.recalculate(activity.activity_id)
+
+      // Refresh points data
+      await fetchActivityData()
+
+      // Clear selection
+      setSelectedPointIndices([])
+
+      console.log('All points restored successfully!')
+      alert('Original waypoints restored!')
+    } catch (err) {
+      console.error('Error restoring points:', err)
+      alert(`Failed to restore points: ${err}`)
+    } finally {
+      setRemoving(false)
+    }
+  }
+
+  const handleStartCreatingSegment = () => {
+    setCreatingSegment(true)
+    setEditingSegmentId(null)
+    setSegmentTimeRange(null)
+  }
+
+  const handleCancelSegmentEditor = () => {
+    setCreatingSegment(false)
+    setEditingSegmentId(null)
+    setSegmentTimeRange(null)
+  }
+
+  const handleGenerateSegments = async () => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+
+    // Warn if segments exist
+    if (userSegments.length > 0) {
+      const confirmed = window.confirm(
+        'This will delete all existing segments and generate new ones. Continue?'
+      )
+      if (!confirmed) return
+    }
+
+    try {
+      setGeneratingSegments(true)
+      const result = await userSegmentsAPI.generate(activity.activity_id, userSegments.length > 0)
+      await fetchUserSegments()
+      await fetchActivityData() // Reload points to get updated is_inactive flags
+      alert(`Generated ${result.segments_created} segments (${result.rest_segments} rest periods).\n\nDetected ${result.inactive_points}/${result.total_points} inactive points (${((result.inactive_points/result.total_points)*100).toFixed(1)}%)`)
+    } catch (err: any) {
+      console.error('Error generating segments:', err)
+      alert(`Failed to generate segments: ${err.response?.data?.detail || err.message}`)
+    } finally {
+      setGeneratingSegments(false)
+    }
+  }
+
+  const handleRepairAdjacency = async () => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+
+    try {
+      setRepairingAdjacency(true)
+      const result = await userSegmentsAPI.repairAdjacency(activity.activity_id)
+      await fetchUserSegments()
+      if (result.repaired > 0) {
+        alert(`Repaired ${result.repaired} gap(s) between segments`)
+      } else {
+        alert('No gaps detected - all segments are properly adjacent')
+      }
+    } catch (err: any) {
+      console.error('Error repairing adjacency:', err)
+      alert(`Failed to repair adjacency: ${err.response?.data?.detail || err.message}`)
+    } finally {
+      setRepairingAdjacency(false)
+    }
+  }
+
+  const handleSplitSegment = (segmentId: number) => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+    setEditingMode({ type: 'split', segmentId })
+  }
+
+  const handleMergeWithPrior = async (segmentId: number) => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+    try {
+      await userSegmentsAPI.mergeWithPrevious(segmentId)
+      await fetchUserSegments()
+      setEditingSegmentId(null)
+      alert('Segments merged successfully!')
+    } catch (err: any) {
+      console.error('Error merging segments:', err)
+      alert(`Failed to merge: ${err.response?.data?.detail || err.message}`)
+    }
+  }
+
+  const handleMergeWithNext = async (segmentId: number) => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+    try {
+      await userSegmentsAPI.mergeWithNext(segmentId)
+      await fetchUserSegments()
+      setEditingSegmentId(null)
+      alert('Segments merged successfully!')
+    } catch (err: any) {
+      console.error('Error merging segments:', err)
+      alert(`Failed to merge: ${err.response?.data?.detail || err.message}`)
+    }
+  }
+
+  const handleAdjustStart = (segmentId: number) => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+    setEditingMode({ type: 'adjust-start', segmentId })
+  }
+
+  const handleAdjustEnd = (segmentId: number) => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+    setEditingMode({ type: 'adjust-end', segmentId })
+  }
+
+  const handleChartClick = useCallback(async (index: number) => {
+    try {
+      if (!points || points.length === 0) return
+      if (index < 0 || index >= points.length) return
+
+      const clickedTime = points[index]?.time
+      if (!clickedTime) return
+
+      // Handle special editing modes
+      if (editingMode) {
+        if (editingMode.type === 'split') {
+          // Split the segment at clicked time
+          try {
+            await userSegmentsAPI.split(editingMode.segmentId, clickedTime)
+            await fetchUserSegments()
+            setEditingMode(null)
+            setEditingSegmentId(null)
+            alert('Segment split successfully!')
+          } catch (err: any) {
+            console.error('Error splitting segment:', err)
+            alert(`Failed to split: ${err.response?.data?.detail || err.message}`)
+          }
+        } else if (editingMode.type === 'adjust-start') {
+          // Adjust start boundary
+          try {
+            await userSegmentsAPI.adjustBoundary(editingMode.segmentId, 'start', clickedTime)
+            await fetchUserSegments()
+            setEditingMode(null)
+            alert('Boundary adjusted successfully!')
+          } catch (err: any) {
+            console.error('Error adjusting boundary:', err)
+            alert(`Failed to adjust: ${err.response?.data?.detail || err.message}`)
+          }
+        } else if (editingMode.type === 'adjust-end') {
+          // Adjust end boundary
+          try {
+            await userSegmentsAPI.adjustBoundary(editingMode.segmentId, 'end', clickedTime)
+            await fetchUserSegments()
+            setEditingMode(null)
+            alert('Boundary adjusted successfully!')
+          } catch (err: any) {
+            console.error('Error adjusting boundary:', err)
+            alert(`Failed to adjust: ${err.response?.data?.detail || err.message}`)
+          }
+        }
+        return
+      }
+
+      // Normal segment creation/editing mode
+      if (!creatingSegment && !editingSegmentId) return
+
+      if (!segmentTimeRange) {
+        // First click - set start time
+        setSegmentTimeRange({ start: clickedTime, end: clickedTime })
+      } else {
+        // Second click - set end time (stays in editor, user can adjust)
+        const start = segmentTimeRange.start
+        const end = clickedTime
+
+        // Ensure start is before end
+        const sortedRange = start <= end
+          ? { start, end }
+          : { start: end, end: start }
+
+        setSegmentTimeRange(sortedRange)
+      }
+    } catch (err) {
+      console.error('Error handling chart click:', err)
+    }
+  }, [creatingSegment, editingSegmentId, segmentTimeRange, points, editingMode])
+
+  const handleSaveSegment = async (data: {
+    timeRange: { start: string; end: string },
+    terrainType: 'rest' | 'non-technical' | 'technical',
+    difficulty?: string,
+    pitchCount?: number
+  }) => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+
+    const { timeRange, terrainType, difficulty, pitchCount } = data
+
+    try {
+      // Determine segment_type and is_technical based on terrain selection
+      let segmentType: 'climb' | 'descent' | 'flat' | 'rest'
+      let isTechnical: boolean
+
+      if (terrainType === 'rest') {
+        segmentType = 'rest'
+        isTechnical = false
+      } else {
+        // Auto-detect climb/descent/flat
+        const segmentPoints = points.filter(p => p.time >= timeRange.start && p.time <= timeRange.end)
+        let elevationGain = 0
+        let elevationLoss = 0
+        for (let i = 0; i < segmentPoints.length - 1; i++) {
+          const delta = segmentPoints[i + 1].elevation_ft - segmentPoints[i].elevation_ft
+          if (delta > 0) elevationGain += delta
+          else elevationLoss += Math.abs(delta)
+        }
+
+        if (elevationGain > 50 && elevationGain > elevationLoss * 1.5) {
+          segmentType = 'climb'
+        } else if (elevationLoss > 50 && elevationLoss > elevationGain * 1.5) {
+          segmentType = 'descent'
+        } else {
+          segmentType = 'flat'
+        }
+
+        isTechnical = terrainType === 'technical'
+      }
+
+      if (editingSegmentId) {
+        // Update existing segment (boundary changes must use adjustBoundary API)
+        await userSegmentsAPI.update(editingSegmentId, {
+          segment_type: segmentType,
+          is_technical: isTechnical,
+          difficulty: difficulty || undefined,
+          pitch_count: pitchCount,
+          terrain_factor: terrainFactor,
+          pack_weight_override_lbs: packWeightOverride ? Number(packWeightOverride) : undefined
+        })
+        alert('Segment updated successfully!')
+      } else {
+        // Create new segment
+        await userSegmentsAPI.create(activity.activity_id, {
+          segment_type: segmentType,
+          start_time: timeRange.start,
+          end_time: timeRange.end,
+          is_technical: isTechnical,
+          difficulty: difficulty || undefined,
+          pitch_count: pitchCount,
+          terrain_factor: terrainFactor,
+          pack_weight_override_lbs: packWeightOverride ? Number(packWeightOverride) : undefined
+        })
+        alert('Segment created successfully!')
+      }
+
+      // Refresh segments list
+      await fetchUserSegments()
+
+      // Reset state
+      setCreatingSegment(false)
+      setEditingSegmentId(null)
+      setSegmentTimeRange(null)
+    } catch (err) {
+      console.error('Error saving segment:', err)
+      alert(`Failed to save segment: ${err}`)
+    }
+  }
+
+  const handleSaveAndContinueSegment = async (data: {
+    timeRange: { start: string; end: string },
+    terrainType: 'rest' | 'non-technical' | 'technical',
+    difficulty?: string,
+    pitchCount?: number
+  }) => {
+    if (!isAdmin) {
+      alert('This feature is disabled in Viewer mode')
+      return
+    }
+
+    const { timeRange, terrainType, difficulty, pitchCount } = data
+
+    try {
+      // Determine segment_type and is_technical based on terrain selection
+      let segmentType: 'climb' | 'descent' | 'flat' | 'rest'
+      let isTechnical: boolean
+
+      if (terrainType === 'rest') {
+        segmentType = 'rest'
+        isTechnical = false
+      } else {
+        // Auto-detect climb/descent/flat
+        const segmentPoints = points.filter(p => p.time >= timeRange.start && p.time <= timeRange.end)
+        let elevationGain = 0
+        let elevationLoss = 0
+        for (let i = 0; i < segmentPoints.length - 1; i++) {
+          const delta = segmentPoints[i + 1].elevation_ft - segmentPoints[i].elevation_ft
+          if (delta > 0) elevationGain += delta
+          else elevationLoss += Math.abs(delta)
+        }
+
+        if (elevationGain > 50 && elevationGain > elevationLoss * 1.5) {
+          segmentType = 'climb'
+        } else if (elevationLoss > 50 && elevationLoss > elevationGain * 1.5) {
+          segmentType = 'descent'
+        } else {
+          segmentType = 'flat'
+        }
+
+        isTechnical = terrainType === 'technical'
+      }
+
+      // Create new segment
+      await userSegmentsAPI.create(activity.activity_id, {
+        segment_type: segmentType,
+        start_time: timeRange.start,
+        end_time: timeRange.end,
+        is_technical: isTechnical,
+        difficulty: difficulty || undefined,
+        pitch_count: pitchCount,
+        terrain_factor: terrainFactor,
+        pack_weight_override_lbs: packWeightOverride ? Number(packWeightOverride) : undefined
+      })
+      alert('Segment created successfully!')
+
+      // Refresh segments list
+      await fetchUserSegments()
+
+      // Continue creating - set new start point to the end of the saved segment
+      setSegmentTimeRange({ start: timeRange.end, end: timeRange.end })
+      setSelectedPointIndices([])
+    } catch (err) {
+      console.error('Error saving segment:', err)
+      alert(`Failed to save segment: ${err}`)
+    }
+  }
+
+  const handleDeleteSegment = async (segmentId: number) => {
+    if (!confirm('Delete this segment?')) return
+
+    try {
+      await userSegmentsAPI.delete(segmentId)
+      await fetchUserSegments()
+      if (selectedSegmentId === segmentId) {
+        setSelectedSegmentId(null)
+      }
+      alert('Segment deleted successfully!')
+    } catch (err) {
+      console.error('Error deleting segment:', err)
+      alert(`Failed to delete segment: ${err}`)
+    }
+  }
+
+  const handleEditingValuesChange = useCallback((values: {
+    terrainType: 'rest' | 'non-technical' | 'technical'
+    difficulty?: string
+    pitchCount?: number
+    terrainFactor?: number
+    packWeightOverride?: string
+  }) => {
+    setCurrentEditingValues(values)
+  }, [])
+
+  const handleSelectSegment = async (segmentId: number) => {
+    // Clicking a segment enters edit mode for that segment
+    if (editingSegmentId === segmentId) {
+      // Save before closing if there are current editing values. isAdmin-gated
+      // silently (no alert) - the user didn't click a save button, so there's
+      // nothing to tell a viewer "no" to; segment browsing/switching itself
+      // stays fully allowed either way.
+      if (isAdmin && currentEditingValues && segmentTimeRange) {
+        try {
+          // Determine segment_type based on terrain selection
+          let segmentType: 'climb' | 'descent' | 'flat' | 'rest'
+          let isTechnical: boolean
+
+          if (currentEditingValues.terrainType === 'rest') {
+            segmentType = 'rest'
+            isTechnical = false
+          } else {
+            // Auto-detect climb/descent/flat
+            const segmentPoints = points.filter(p => p.time >= segmentTimeRange.start && p.time <= segmentTimeRange.end)
+            let elevationGain = 0
+            let elevationLoss = 0
+            for (let i = 0; i < segmentPoints.length - 1; i++) {
+              const delta = segmentPoints[i + 1].elevation_ft - segmentPoints[i].elevation_ft
+              if (delta > 0) elevationGain += delta
+              else elevationLoss += Math.abs(delta)
+            }
+
+            if (elevationGain > 50 && elevationGain > elevationLoss * 1.5) {
+              segmentType = 'climb'
+            } else if (elevationLoss > 50 && elevationLoss > elevationGain * 1.5) {
+              segmentType = 'descent'
+            } else {
+              segmentType = 'flat'
+            }
+
+            isTechnical = currentEditingValues.terrainType === 'technical'
+          }
+
+          // Silently update without alert
+          await userSegmentsAPI.update(editingSegmentId, {
+            segment_type: segmentType,
+            start_time: segmentTimeRange.start,
+            end_time: segmentTimeRange.end,
+            is_technical: isTechnical,
+            difficulty: currentEditingValues.difficulty || undefined,
+            pitch_count: currentEditingValues.pitchCount,
+            terrain_factor: currentEditingValues.terrainFactor,
+            pack_weight_override_lbs: currentEditingValues.packWeightOverride ? Number(currentEditingValues.packWeightOverride) : undefined
+          })
+          await fetchUserSegments()
+        } catch (err) {
+          console.error('Error saving segment on close:', err)
+        }
+      }
+
+      // Close the editor
+      setEditingSegmentId(null)
+      setSegmentTimeRange(null)
+      setSelectedSegmentId(null)
+      setCurrentEditingValues(null)
+    } else {
+      // Save the currently editing segment before switching to a new one.
+      // Same silent isAdmin gate as above - no alert, switching stays allowed.
+      if (isAdmin && editingSegmentId && currentEditingValues && segmentTimeRange) {
+        try {
+          // Determine segment_type based on terrain selection
+          let segmentType: 'climb' | 'descent' | 'flat' | 'rest'
+          let isTechnical: boolean
+
+          if (currentEditingValues.terrainType === 'rest') {
+            segmentType = 'rest'
+            isTechnical = false
+          } else {
+            // Auto-detect climb/descent/flat
+            const segmentPoints = points.filter(p => p.time >= segmentTimeRange.start && p.time <= segmentTimeRange.end)
+            let elevationGain = 0
+            let elevationLoss = 0
+            for (let i = 0; i < segmentPoints.length - 1; i++) {
+              const delta = segmentPoints[i + 1].elevation_ft - segmentPoints[i].elevation_ft
+              if (delta > 0) elevationGain += delta
+              else elevationLoss += Math.abs(delta)
+            }
+
+            if (elevationGain > 50 && elevationGain > elevationLoss * 1.5) {
+              segmentType = 'climb'
+            } else if (elevationLoss > 50 && elevationLoss > elevationGain * 1.5) {
+              segmentType = 'descent'
+            } else {
+              segmentType = 'flat'
+            }
+
+            isTechnical = currentEditingValues.terrainType === 'technical'
+          }
+
+          // Silently update without alert
+          await userSegmentsAPI.update(editingSegmentId, {
+            segment_type: segmentType,
+            start_time: segmentTimeRange.start,
+            end_time: segmentTimeRange.end,
+            is_technical: isTechnical,
+            difficulty: currentEditingValues.difficulty || undefined,
+            pitch_count: currentEditingValues.pitchCount,
+            terrain_factor: currentEditingValues.terrainFactor,
+            pack_weight_override_lbs: currentEditingValues.packWeightOverride ? Number(currentEditingValues.packWeightOverride) : undefined
+          })
+          await fetchUserSegments()
+        } catch (err) {
+          console.error('Error saving segment before switch:', err)
+        }
+      }
+
+      // Start editing the new segment
+      setEditingSegmentId(segmentId)
+      setCreatingSegment(false)
+      const segment = userSegments.find(s => s.id === segmentId)
+      if (segment) {
+        setSegmentTimeRange({ start: segment.start_time, end: segment.end_time })
+        setSelectedSegmentId(segmentId)
+      }
+    }
+  }
+
+  // Haversine distance formula
+  const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 3959 // Earth's radius in miles
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a =
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon/2) * Math.sin(dLon/2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+    return R * c
+  }
+
+  // Calculate speed for each point (mph) - memoized for performance
+  const pointSpeeds = useMemo((): number[] => {
+    const speeds: number[] = []
+    for (let i = 0; i < points.length - 1; i++) {
+      const p1 = points[i]
+      const p2 = points[i + 1]
+      const distance = haversineDistance(p1.lat, p1.lon, p2.lat, p2.lon) // miles
+      const time1 = new Date(p1.time).getTime()
+      const time2 = new Date(p2.time).getTime()
+      const hours = (time2 - time1) / (1000 * 60 * 60)
+      const speed = hours > 0 ? distance / hours : 0
+      speeds.push(speed)
+    }
+    // Last point gets same speed as previous
+    if (speeds.length > 0) {
+      speeds.push(speeds[speeds.length - 1])
+    }
+    return speeds
+  }, [points])
+
+  // Create O(1) lookup bitmask for selected points
+  const isPointSelected = useMemo(() => {
+    const bitmask = new Array(points.length).fill(false)
+    selectedPointIndices.forEach(i => {
+      if (i >= 0 && i < points.length) {
+        bitmask[i] = true
+      }
+    })
+    return bitmask
+  }, [selectedPointIndices, points.length])
+
+  // Get selected segment's time range and color for highlighting
+  const selectedSegmentHighlight = useMemo(() => {
+    if (!selectedSegmentId) return null
+    const segment = userSegments.find(s => s.id === selectedSegmentId)
+    if (!segment) return null
+    const colors = getSegmentColors(segment.segment_type)
+    return {
+      start: segment.start_time,
+      end: segment.end_time,
+      color: colors.highlight
+    }
+  }, [selectedSegmentId, userSegments])
+
+  // Find points above max speed threshold
+  const handleApplyMaxSpeed = useCallback((threshold: number) => {
+    const aboveThreshold: number[] = []
+    pointSpeeds.forEach((speed, index) => {
+      if (speed > threshold) {
+        aboveThreshold.push(index)
+      }
+    })
+    startTransition(() => {
+      setSelectedPointIndices(aboveThreshold)
+    })
+  }, [pointSpeeds])
+
+  const handleTogglePoint = useCallback((index: number) => {
+    try {
+      if (!editMode) return
+      if (!points || points.length === 0) return
+      if (index < 0 || index >= points.length) return
+
+      // Use startTransition to make the update non-blocking
+      startTransition(() => {
+        setSelectedPointIndices(prev => {
+          if (prev.includes(index)) {
+            // Deselect if already selected
+            return prev.filter(i => i !== index)
+          } else {
+            // Add to selection
+            return [...prev, index]
+          }
+        })
+      })
+    } catch (err) {
+      console.error('Error toggling point:', err)
+    }
+  }, [editMode, points])
+
+  const handleBoxSelect = useCallback((indices: number[]) => {
+    // Add box-selected points to existing selection
+    startTransition(() => {
+      setSelectedPointIndices(prev => {
+        const combined = [...prev, ...indices]
+        // Remove duplicates
+        return Array.from(new Set(combined))
+      })
+    })
+  }, [])
+
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <div className="text-red-600">Error: {error}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4 relative">
+      {/* Loading Overlay */}
+      {loading && (
+        <div className="absolute inset-0 bg-white bg-opacity-80 z-50 flex items-center justify-center rounded-lg">
+          <div className="text-lg text-gray-600 font-medium">Loading activity data...</div>
+        </div>
+      )}
+
+
+      {/* Map and Charts */}
+      <div className={`relative min-h-[600px] ${loading ? 'opacity-40 pointer-events-none' : ''}`}>
+        {/* Background Map Layer - fills entire area */}
+        <div className="absolute inset-0 rounded-lg overflow-hidden z-0">
+          <ActivityMap
+            points={points}
+            isPointSelected={isPointSelected}
+            editMode={editMode}
+            onPointClick={
+              creatingSegment || editingSegmentId !== null
+                ? handleChartClick
+                : editMode
+                ? handleTogglePoint
+                : undefined
+            }
+            onBoxSelect={editMode && !creatingSegment && !editingSegmentId ? handleBoxSelect : undefined}
+            highlightSegment={selectedSegmentHighlight}
+            segmentMode={activePanel === 'segments'}
+          />
+        </div>
+
+        {/* Floating Content Grid - on top of map */}
+        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 pointer-events-none">
+        {/* Left Column - Charts (2/3 width) */}
+        <div className={`lg:col-span-2 space-y-6 ${editingMode ? '-mt-10' : ''}`}>
+          {/* Empty space in top-left for map visibility - increased for more map space */}
+          <div className="h-[500px]"></div>
+
+          {/* Editing Mode Prompt + Charts - wrapped together to remove gap */}
+          <div className="pointer-events-auto">
+            {/* Editing Mode Prompt - Tab style above charts */}
+            {editingMode && (
+              <div className="flex justify-start">
+                <div className="bg-blue-600 text-white px-6 py-2 rounded-t-lg shadow-lg flex items-center gap-4 -ml-1">
+                  <span className="text-sm font-medium">
+                    {editingMode.type === 'split' && 'Click on chart to split segment'}
+                    {editingMode.type === 'adjust-start' && 'Click to set new start time'}
+                    {editingMode.type === 'adjust-end' && 'Click to set new end time'}
+                  </span>
+                  <button
+                    onClick={() => setEditingMode(null)}
+                    className="px-3 py-1 bg-white text-blue-600 rounded hover:bg-gray-100 text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Charts - floating white box */}
+            <div className={`bg-white rounded-lg shadow-lg p-4 space-y-6 ${
+              editingMode ? 'ring-4 ring-blue-500' : ''
+            } ${editingMode ? 'rounded-t-none' : ''}`}>
+            {activePanel === 'predict' ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-gray-700">Total Time Distribution</h4>
+                  <PredictionDistributionChart
+                    draws={predictionResult?.total_distribution_min ?? []}
+                    meanMin={predictionResult?.total_mean_min ?? 0}
+                    actualMin={predictionResult?.actual_total_min}
+                    xAxisLabel="Total Time"
+                    height={220}
+                  />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-gray-700">Cumulative Time vs. Distance</h4>
+                  <PredictionCumulativeChart
+                    points={predictionResult?.cumulative_points ?? []}
+                    actualPoints={predictionResult?.actual_cumulative_points}
+                    yKey="cumulative_distance_mi"
+                    yLabel="Distance"
+                    yFormatter={formatDistance}
+                    height={220}
+                  />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-gray-700">Summit Time Distribution</h4>
+                  {summitOutsideAfternoonPct !== null && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      Summit outside of afternoon window in {summitOutsideAfternoonPct}% of draws.
+                    </p>
+                  )}
+                  <PredictionTimeOfDayChart
+                    values={predictionResult?.summit_time_of_day_min ?? []}
+                    meanValue={predictionResult?.summit_mean_time_of_day_min ?? 0}
+                    actualValue={predictionResult?.actual_summit_time_of_day_min}
+                    categoryForBin={(m) => isAfternoonWindow(m) ? 'red' : 'grey'}
+                    xAxisLabel="Summit Time"
+                    height={220}
+                  />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold mb-2 text-gray-700">Finish Time Distribution</h4>
+                  {finishDaylightPct !== null && (
+                    <p className="text-xs text-gray-500 mb-2">
+                      Finish during daylight in {finishDaylightPct}% of draws.
+                    </p>
+                  )}
+                  <PredictionTimeOfDayChart
+                    values={predictionResult?.finish_time_of_day_min ?? []}
+                    meanValue={predictionResult?.finish_mean_time_of_day_min ?? 0}
+                    actualValue={predictionResult?.actual_finish_time_of_day_min}
+                    categoryForBin={(m) => isDaylight(m, sunriseMin, sunsetMin) ? 'blue' : 'grey'}
+                    xAxisLabel="Finish Time"
+                    height={220}
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Elevation Chart */}
+                <ElevationChart
+                  points={points}
+                  editMode={editMode || creatingSegment || editingSegmentId !== null}
+                  isPointSelected={isPointSelected}
+                  onPointClick={
+                    creatingSegment || editingSegmentId !== null
+                      ? handleChartClick
+                      : editMode
+                      ? handleTogglePoint
+                      : undefined
+                  }
+                  highlightSegment={selectedSegmentHighlight}
+                  segmentMode={activePanel === 'segments'}
+                  xDomain={chartDomain}
+                  timezone={activity.timezone}
+                />
+
+                {/* Speed Chart */}
+                <SpeedChart
+                  points={points}
+                  editMode={editMode || creatingSegment || editingSegmentId !== null}
+                  isPointSelected={isPointSelected}
+                  onPointClick={
+                    creatingSegment || editingSegmentId !== null
+                      ? handleChartClick
+                      : editMode
+                      ? handleTogglePoint
+                      : undefined
+                  }
+                  highlightSegment={selectedSegmentHighlight}
+                  segmentMode={activePanel === 'segments'}
+                  xDomain={chartDomain}
+                  timezone={activity.timezone}
+                />
+              </>
+            )}
+          </div>
+          </div>
+        </div>
+
+        {/* Right Column - Accordion Panel (1/3 width) */}
+        <div className="flex flex-col space-y-6">
+          {/* Accordion Panel - floating white box */}
+          <div className="bg-white rounded-lg shadow-lg pointer-events-auto overflow-hidden flex-1 flex flex-col">
+            <AccordionSection
+              id="metadata"
+              title="Activity Details"
+              isOpen={activePanel === 'metadata'}
+              onToggle={() => setActivePanel(activePanel === 'metadata' ? null : 'metadata')}
+            >
+              <ActivityMetadataForm activity={activity} onActivityUpdated={onActivityUpdated} onDeleted={onDeleted} />
+            </AccordionSection>
+
+            <AccordionSection
+              id="segments"
+              title="View Segments"
+              isOpen={activePanel === 'segments'}
+              onToggle={() => setActivePanel(activePanel === 'segments' ? null : 'segments')}
+              expandContent={true}
+            >
+              <ViewSegments
+                segments={userSegments}
+                points={points}
+                selectedSegmentId={selectedSegmentId}
+                editingSegmentId={editingSegmentId}
+                creatingSegment={creatingSegment}
+                segmentEditor={
+                  <SegmentEditor
+                    activity={activity}
+                    timeRange={segmentTimeRange}
+                    points={points}
+                    editingSegment={editingSegmentId ? userSegments.find(s => s.id === editingSegmentId) : undefined}
+                    onSave={handleSaveSegment}
+                    onSaveAndContinue={handleSaveAndContinueSegment}
+                    onCancel={handleCancelSegmentEditor}
+                    onDelete={editingSegmentId ? () => handleDeleteSegment(editingSegmentId) : undefined}
+                    onSplit={editingSegmentId ? () => handleSplitSegment(editingSegmentId) : undefined}
+                    onMergeWithPrior={editingSegmentId ? () => handleMergeWithPrior(editingSegmentId) : undefined}
+                    onMergeWithNext={editingSegmentId ? () => handleMergeWithNext(editingSegmentId) : undefined}
+                    onAdjustStart={editingSegmentId ? () => handleAdjustStart(editingSegmentId) : undefined}
+                    onAdjustEnd={editingSegmentId ? () => handleAdjustEnd(editingSegmentId) : undefined}
+                    isFirstSegment={editingSegmentId ? userSegments.findIndex(s => s.id === editingSegmentId) === 0 : false}
+                    isLastSegment={editingSegmentId ? userSegments.findIndex(s => s.id === editingSegmentId) === userSegments.length - 1 : false}
+                    onValuesChange={handleEditingValuesChange}
+                    isInSplitMode={editingMode?.type === 'split' && editingMode.segmentId === editingSegmentId}
+                    isInAdjustStartMode={editingMode?.type === 'adjust-start' && editingMode.segmentId === editingSegmentId}
+                    isInAdjustEndMode={editingMode?.type === 'adjust-end' && editingMode.segmentId === editingSegmentId}
+                  />
+                }
+                onGenerateSegments={handleGenerateSegments}
+                generatingSegments={generatingSegments}
+                onRepairAdjacency={handleRepairAdjacency}
+                repairingAdjacency={repairingAdjacency}
+                onDeleteSegment={handleDeleteSegment}
+                onSelectSegment={handleSelectSegment}
+              />
+            </AccordionSection>
+
+            <AccordionSection
+              id="waypoints"
+              title="Clean Waypoints"
+              isOpen={activePanel === 'waypoints'}
+              onToggle={() => setActivePanel(activePanel === 'waypoints' ? null : 'waypoints')}
+            >
+              <EditControls
+                selectedPointIndices={selectedPointIndices}
+                removing={removing}
+                onRemoveSelectedPoints={handleRemoveSelectedPoints}
+                onClearSelection={() => setSelectedPointIndices([])}
+                onRestoreAll={handleRestoreAll}
+                pointSpeeds={pointSpeeds}
+                onApplyMaxSpeed={handleApplyMaxSpeed}
+              />
+            </AccordionSection>
+
+            <AccordionSection
+              id="predict"
+              title="Predict Time"
+              isOpen={activePanel === 'predict'}
+              onToggle={() => setActivePanel(activePanel === 'predict' ? null : 'predict')}
+            >
+              <PredictTimePanel activity={activity} result={predictionResult} onResultChange={setPredictionResult} onActivityUpdated={onActivityUpdated} />
+            </AccordionSection>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  )
+}
+
+export default ActivityEditor

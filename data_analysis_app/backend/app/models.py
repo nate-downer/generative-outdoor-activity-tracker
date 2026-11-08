@@ -1,0 +1,172 @@
+"""SQLAlchemy ORM models for the Garmin data analysis app."""
+from datetime import datetime
+from sqlalchemy import (
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, Index
+)
+from sqlalchemy.orm import relationship
+from .database import Base
+
+
+class User(Base):
+    """An account that can log in - today just the single admin; `role` leaves
+    room for a future "client" tier without a schema change."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    # Nullable until Phase 2's login setup sets a real password - lets this table
+    # exist a phase ahead of the login endpoint without a second migration.
+    password_hash = Column(String)
+    role = Column(String, nullable=False, default="admin")  # "admin" | "client"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Activity(Base):
+    """Activity metadata and aggregate statistics."""
+    __tablename__ = "activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    activity_id = Column(String, unique=True, nullable=False, index=True)
+    activity_name = Column(String)
+    activity_type = Column(String)
+    date = Column(DateTime, nullable=False)
+    start_time_utc = Column(DateTime, nullable=False)
+    start_time_local = Column(DateTime)
+    timezone = Column(String)
+
+    # Cached aggregate stats (calculated from segments)
+    total_duration_sec = Column(Float)
+    total_distance_mi = Column(Float)
+    total_elevation_gain_ft = Column(Float)
+    total_elevation_loss_ft = Column(Float)
+    # Most recent Predict Time result's total duration, for planned routes - lets the
+    # list view show a projected time instead of the imported GPX trace's own
+    # (irrelevant) recorded duration.
+    predicted_total_duration_sec = Column(Float)
+    # Full most-recent prediction result (segments, distributions, cumulative
+    # points, etc.) as JSON, so it can be restored without re-running the
+    # prediction - see app/api/predictions.py.
+    predicted_result_json = Column(Text)
+
+    # User metadata
+    body_weight_lbs = Column(Float)  # User's body weight for metabolic calculations
+    weight_carried_lbs = Column(Float)  # Pack/load weight
+    terrain_factor = Column(Float, default=1.1)  # Default terrain factor for segments (Dirt Road)
+    party_size = Column(Integer)
+    notes = Column(Text)
+    is_planned = Column(Boolean, default=False, nullable=False)
+    # Route/skill familiarity - shared covariate in the pooled locomotion duration model
+    experience_level = Column(String, nullable=False, default="New Route - Familiar Skills")
+
+    # Tenancy foundation (Milestone 1.0 phase 1). Nullable: SQLite can't add a NOT
+    # NULL column without a default to a populated table, and there's no "current
+    # user" to stamp new activities with until Phase 2's login/session exists.
+    owner_id = Column(Integer, ForeignKey("users.id"))
+    is_public = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    points = relationship("Point", back_populates="activity", cascade="all, delete-orphan")
+    segments = relationship("Segment", back_populates="activity", cascade="all, delete-orphan")
+    user_segments = relationship("UserSegment", back_populates="activity", cascade="all, delete-orphan")
+
+
+class Point(Base):
+    """GPS point from GPX file."""
+    __tablename__ = "points"
+
+    id = Column(Integer, primary_key=True, index=True)
+    activity_id = Column(String, ForeignKey("activities.activity_id", ondelete="CASCADE"), nullable=False)
+    time = Column(DateTime, nullable=False)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    elevation_m = Column(Float, nullable=False)
+    elevation_ft = Column(Float, nullable=False)
+
+    # User edit flag (soft delete)
+    is_removed = Column(Boolean, default=False)
+
+    # Inactivity flag (for automated segmentation)
+    is_inactive = Column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    activity = relationship("Activity", back_populates="points")
+
+    # Define composite index
+    __table_args__ = (
+        Index('idx_points_activity_time', 'activity_id', 'time'),
+    )
+
+
+class Segment(Base):
+    """Calculated segment between consecutive GPS points."""
+    __tablename__ = "segments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    activity_id = Column(String, ForeignKey("activities.activity_id", ondelete="CASCADE"), nullable=False)
+
+    # Start/end references
+    start_point_id = Column(Integer, ForeignKey("points.id", ondelete="CASCADE"), nullable=False)
+    end_point_id = Column(Integer, ForeignKey("points.id", ondelete="CASCADE"), nullable=False)
+
+    # Time
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    time_delta_sec = Column(Float, nullable=False)
+
+    # Distance
+    horizontal_distance_mi = Column(Float)
+    distance_3d_mi = Column(Float)
+
+    # Elevation
+    elevation_delta_ft = Column(Float)
+
+    # Calculated metrics
+    speed_mph = Column(Float)
+    pace_min_per_mi = Column(Float)
+    grade_percent = Column(Float)
+
+    # Relationships
+    activity = relationship("Activity", back_populates="segments")
+
+    __table_args__ = (
+        Index('idx_segments_activity', 'activity_id'),
+    )
+
+
+class UserSegment(Base):
+    """User-defined segment (manual terrain annotation)."""
+    __tablename__ = "user_segments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    activity_id = Column(String, ForeignKey("activities.activity_id", ondelete="CASCADE"), nullable=False)
+    segment_type = Column(String, nullable=False)  # 'climb', 'descent', 'flat', 'rest'
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+
+    # Technical climb metadata
+    is_technical = Column(Boolean, default=False)
+    difficulty = Column(String)  # e.g. "5.10a"
+    pitch_count = Column(Integer)  # Number of pitches for technical climbs
+    is_roped = Column(Boolean)
+
+    # Technical descent metadata
+    rappel_count = Column(Integer)
+
+    # Pandolf equation inputs (energy expenditure calculation)
+    terrain_factor = Column(Float)  # 1.0-2.1 (paved to sand), NULL = inherit from activity
+    pack_weight_override_lbs = Column(Float)  # Override activity.weight_carried_lbs
+
+    # Pandolf equation outputs (calculated and cached)
+    avg_power_watts = Column(Float)  # Average metabolic power
+    total_energy_kcal = Column(Float)  # Total energy expenditure
+    energy_calculation_error = Column(String)  # Error message if calculation failed
+
+    # Relationships
+    activity = relationship("Activity", back_populates="user_segments")
+
+    __table_args__ = (
+        Index('idx_user_segments_activity', 'activity_id'),
+    )
