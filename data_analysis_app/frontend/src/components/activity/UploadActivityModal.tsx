@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import toast from 'react-hot-toast'
 import { gpxAPI, userSegmentsAPI } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
+import { showViewerModeToast } from '../../utils/viewerMode'
 
 interface UploadActivityModalProps {
   isOpen: boolean
@@ -38,7 +40,7 @@ function UploadActivityModal({ isOpen, onClose, onSuccess, defaultIsPlanned = fa
 
   const handleUpload = async () => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('upload activity')
       return
     }
 
@@ -58,13 +60,13 @@ function UploadActivityModal({ isOpen, onClose, onSuccess, defaultIsPlanned = fa
         try {
           const genResult = await userSegmentsAPI.generate(result.activity_id, false)
           // Success with auto-generation
-          alert(`Activity uploaded! Generated ${genResult.segments_created} segments (${genResult.rest_segments} rest periods). Detected ${genResult.inactive_points}/${genResult.total_points} inactive points.`)
+          toast.success(`Activity uploaded! Generated ${genResult.segments_created} segments (${genResult.rest_segments} rest periods). Detected ${genResult.inactive_points}/${genResult.total_points} inactive points.`, { duration: 6000 })
         } catch (segErr: any) {
           console.error('Segment generation failed:', segErr)
-          alert('Activity uploaded successfully, but segment generation failed. You can generate segments manually.')
+          toast.error('Activity uploaded successfully, but segment generation failed. You can generate segments manually.')
         }
       } else {
-        alert('Planned route uploaded successfully!')
+        toast.success('Planned route uploaded successfully!')
       }
 
       // Reset form and close

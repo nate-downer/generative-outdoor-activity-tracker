@@ -262,6 +262,7 @@ function MultiLineChart({ activities, maxActivities = 20 }: MultiLineChartProps)
               dataKey={activity.activity_id}
               stroke={isHovered ? '#ea580c' : TRACE_COLOR}
               strokeWidth={isHovered ? 3 : 1.5}
+              // @ts-expect-error - Recharts typing issue with custom dot component
               dot={customDot}
               activeDot={false}
               connectNulls={false}

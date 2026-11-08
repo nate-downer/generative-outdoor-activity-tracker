@@ -1,0 +1,83 @@
+# Node.js
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/**/*.pyd
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Database and traces (will be on persistent volume in production)
+backend/garmin_data.db
+backend/garmin_data.db-shm
+backend/garmin_data.db-wal
+backend/app/modeling/traces/
+*.db
+*.db-shm
+*.db-wal
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation and project files (not needed in container)
+project_files/
+*.md
+!backend/README.md
+!frontend/README.md
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Frontend build output (will be built inside Docker)
+frontend/dist/
+frontend/build/
+
+# Virtual environments
+venv/
+backend/venv/
+env/
+ENV/
+
+# Logs
+*.log
+logs/
+
+# OS files
+Thumbs.db

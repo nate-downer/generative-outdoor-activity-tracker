@@ -21,7 +21,7 @@ function Header({ onActivityUploaded }: HeaderProps) {
   const [copied, setCopied] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAdmin, logout } = useAuth()
+  const { isAdmin, email, logout } = useAuth()
 
   const handleLogout = async () => {
     await logout()
@@ -68,16 +68,27 @@ function Header({ onActivityUploaded }: HeaderProps) {
                   {item.label}
                 </button>
               ))}
-              {isAdmin && (
-                <button className="btn-nav" onClick={handleLogout}>
-                  Log Out
-                </button>
-              )}
             </div>
           </div>
         </div>
       </header>
 
+      {/* Admin logged in banner */}
+      {isAdmin && (
+        <div className="bg-gray-700 text-white text-sm py-2">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
+            <span>Logged in with {email}</span>
+            <button
+              onClick={handleLogout}
+              className="px-3 py-1 bg-white text-gray-700 rounded font-medium hover:bg-gray-100"
+            >
+              Log Out
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Viewer mode banner */}
       {!isAdmin && (
         <div className="bg-accent-600 text-white text-sm py-2">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">

@@ -115,6 +115,7 @@ function SpeedChart({ points, editMode = false, onPointClick, isPointSelected = 
           dataKey="speed"
           stroke={segmentMode ? "#9ca3af" : "#ea580c"}
           strokeWidth={2}
+          // @ts-expect-error - Recharts typing issue with inline dot component
           dot={(props: any) => {
             // Show selected points in edit mode
             if (editMode && isPointSelected && isPointSelected[props.index]) {

@@ -3,6 +3,7 @@ import { Activity, TERRAIN_FACTORS, EXPERIENCE_LEVELS, ACTIVITY_TYPES } from '..
 import { activitiesAPI } from '../../services/api'
 import { formatActivityType } from '../../utils/formatters'
 import { useAuth } from '../../context/AuthContext'
+import { showViewerModeToast } from '../../utils/viewerMode'
 
 interface ActivityMetadataFormProps {
   activity: Activity
@@ -33,7 +34,7 @@ function ActivityMetadataForm({ activity, onActivityUpdated, onDeleted }: Activi
     }
 
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('delete activity')
       return
     }
 
@@ -63,7 +64,7 @@ function ActivityMetadataForm({ activity, onActivityUpdated, onDeleted }: Activi
     }
 
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('save changes')
       return
     }
 

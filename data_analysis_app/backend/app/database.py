@@ -1,10 +1,16 @@
 """Database configuration and session management."""
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# SQLite database URL
-SQLALCHEMY_DATABASE_URL = "sqlite:///./garmin_data.db"
+# SQLite database URL - configurable via environment variable
+# Development default: ./garmin_data.db (relative path)
+# Production: set DATABASE_URL to sqlite:////data/garmin_data.db (absolute path on volume)
+SQLALCHEMY_DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "sqlite:///./garmin_data.db"
+)
 
 # Create SQLAlchemy engine
 engine = create_engine(

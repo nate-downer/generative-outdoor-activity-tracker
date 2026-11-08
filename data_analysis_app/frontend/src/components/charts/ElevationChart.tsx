@@ -99,6 +99,7 @@ function ElevationChart({ points, editMode = false, onPointClick, isPointSelecte
           dataKey="elevation"
           stroke={segmentMode ? "#9ca3af" : "#ea580c"}
           strokeWidth={2}
+          // @ts-expect-error - Recharts typing issue with inline dot component
           dot={(props: any) => {
             // Show selected points in edit mode
             if (editMode && isPointSelected && isPointSelected[props.index]) {

@@ -10,6 +10,7 @@ import ModelRunsTable from '../components/analysis/ModelRunsTable';
 import { useModelFitting } from '../hooks/useModelFitting';
 import { MODEL_GROUP_ORDER } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { showViewerModeToast } from '../utils/viewerMode';
 
 // Matches the segment-type color convention used elsewhere in the app (e.g.
 // ActivityEditor.tsx's getSegmentColors(), PredictionCumulativeChart.tsx).
@@ -43,7 +44,7 @@ function ModelDiagnosticsPage() {
 
   const handleFitClick = async () => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode');
+      showViewerModeToast('fit models');
       return;
     }
     setStarting(true);
@@ -69,9 +70,10 @@ function ModelDiagnosticsPage() {
                 </p>
               </div>
               <button
-                className={`btn-primary disabled:opacity-50 disabled:cursor-not-allowed ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleFitClick}
-                disabled={isRunning}
+                disabled={isRunning || !isAdmin}
+                title={!isAdmin ? "Log in to fit models" : ""}
               >
                 {isRunning ? 'Fitting…' : 'Fit Models'}
               </button>

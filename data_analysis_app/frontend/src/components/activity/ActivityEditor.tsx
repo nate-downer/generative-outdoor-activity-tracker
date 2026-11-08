@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, startTransition, useMemo, memo } from 'react'
+import toast from 'react-hot-toast'
 import { Activity, Point, UserSegment, TERRAIN_FACTORS, CLIMB_DIFFICULTIES, PredictionResult } from '../../types'
 import { pointsAPI, segmentsAPI, userSegmentsAPI, predictionsAPI } from '../../services/api'
 import ActivityMap from '../map/ActivityMap'
@@ -11,6 +12,7 @@ import PredictionCumulativeChart from '../charts/analysis/PredictionCumulativeCh
 import PredictionTimeOfDayChart from '../charts/analysis/PredictionTimeOfDayChart'
 import { formatDistance } from '../../utils/formatters'
 import { useAuth } from '../../context/AuthContext'
+import { showViewerModeToast } from '../../utils/viewerMode'
 
 // Predict Time plots: shared time-of-day window logic for summit/finish coloring + subtitles
 const AFTERNOON_START_MIN = 12 * 60
@@ -801,7 +803,7 @@ const EditControls = memo(({
   const { isAdmin } = useAuth()
   const [sliderSpeed, setSliderSpeed] = useState<number>(20)
   const [maxSpeed, setMaxSpeed] = useState<number>(20)
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const debounceTimerRef = useRef<number | null>(null)
 
   const handleSliderChange = (value: number) => {
     setSliderSpeed(value)
@@ -1058,7 +1060,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
     if (selectedPointIndices.length === 0) return
 
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('remove selected points')
       return
     }
 
@@ -1092,9 +1094,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
       setSelectedPointIndices([])
 
       console.log('Points removed successfully!')
+      toast.success('Points removed successfully!')
     } catch (err) {
       console.error('Error removing points:', err)
-      alert(`Failed to remove points: ${err}`)
+      toast.error(`Failed to remove points: ${err}`)
     } finally {
       setRemoving(false)
     }
@@ -1102,7 +1105,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
 
   const handleRestoreAll = async () => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('restore all points')
       return
     }
 
@@ -1128,10 +1131,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
       setSelectedPointIndices([])
 
       console.log('All points restored successfully!')
-      alert('Original waypoints restored!')
+      toast.success('Original waypoints restored!')
     } catch (err) {
       console.error('Error restoring points:', err)
-      alert(`Failed to restore points: ${err}`)
+      toast.error(`Failed to restore points: ${err}`)
     } finally {
       setRemoving(false)
     }
@@ -1151,7 +1154,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
 
   const handleGenerateSegments = async () => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('generate segments')
       return
     }
 
@@ -1168,10 +1171,11 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
       const result = await userSegmentsAPI.generate(activity.activity_id, userSegments.length > 0)
       await fetchUserSegments()
       await fetchActivityData() // Reload points to get updated is_inactive flags
-      alert(`Generated ${result.segments_created} segments (${result.rest_segments} rest periods).\n\nDetected ${result.inactive_points}/${result.total_points} inactive points (${((result.inactive_points/result.total_points)*100).toFixed(1)}%)`)
+      const inactivePct = ((result.inactive_points/result.total_points)*100).toFixed(1)
+      toast.success(`Generated ${result.segments_created} segments (${result.rest_segments} rest periods). Detected ${result.inactive_points}/${result.total_points} inactive points (${inactivePct}%)`)
     } catch (err: any) {
       console.error('Error generating segments:', err)
-      alert(`Failed to generate segments: ${err.response?.data?.detail || err.message}`)
+      toast.error(`Failed to generate segments: ${err.response?.data?.detail || err.message}`)
     } finally {
       setGeneratingSegments(false)
     }
@@ -1179,7 +1183,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
 
   const handleRepairAdjacency = async () => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('repair adjacency')
       return
     }
 
@@ -1188,13 +1192,13 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
       const result = await userSegmentsAPI.repairAdjacency(activity.activity_id)
       await fetchUserSegments()
       if (result.repaired > 0) {
-        alert(`Repaired ${result.repaired} gap(s) between segments`)
+        toast.success(`Repaired ${result.repaired} gap(s) between segments`)
       } else {
-        alert('No gaps detected - all segments are properly adjacent')
+        toast.success('No gaps detected - all segments are properly adjacent')
       }
     } catch (err: any) {
       console.error('Error repairing adjacency:', err)
-      alert(`Failed to repair adjacency: ${err.response?.data?.detail || err.message}`)
+      toast.error(`Failed to repair adjacency: ${err.response?.data?.detail || err.message}`)
     } finally {
       setRepairingAdjacency(false)
     }
@@ -1202,7 +1206,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
 
   const handleSplitSegment = (segmentId: number) => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('split segment')
       return
     }
     setEditingMode({ type: 'split', segmentId })
@@ -1210,39 +1214,39 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
 
   const handleMergeWithPrior = async (segmentId: number) => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('merge segments')
       return
     }
     try {
       await userSegmentsAPI.mergeWithPrevious(segmentId)
       await fetchUserSegments()
       setEditingSegmentId(null)
-      alert('Segments merged successfully!')
+      toast.success('Segments merged successfully!')
     } catch (err: any) {
       console.error('Error merging segments:', err)
-      alert(`Failed to merge: ${err.response?.data?.detail || err.message}`)
+      toast.error(`Failed to merge: ${err.response?.data?.detail || err.message}`)
     }
   }
 
   const handleMergeWithNext = async (segmentId: number) => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('merge segments')
       return
     }
     try {
       await userSegmentsAPI.mergeWithNext(segmentId)
       await fetchUserSegments()
       setEditingSegmentId(null)
-      alert('Segments merged successfully!')
+      toast.success('Segments merged successfully!')
     } catch (err: any) {
       console.error('Error merging segments:', err)
-      alert(`Failed to merge: ${err.response?.data?.detail || err.message}`)
+      toast.error(`Failed to merge: ${err.response?.data?.detail || err.message}`)
     }
   }
 
   const handleAdjustStart = (segmentId: number) => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('adjust segment boundary')
       return
     }
     setEditingMode({ type: 'adjust-start', segmentId })
@@ -1250,7 +1254,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
 
   const handleAdjustEnd = (segmentId: number) => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('adjust segment boundary')
       return
     }
     setEditingMode({ type: 'adjust-end', segmentId })
@@ -1273,10 +1277,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
             await fetchUserSegments()
             setEditingMode(null)
             setEditingSegmentId(null)
-            alert('Segment split successfully!')
+            toast.success('Segment split successfully!')
           } catch (err: any) {
             console.error('Error splitting segment:', err)
-            alert(`Failed to split: ${err.response?.data?.detail || err.message}`)
+            toast.error(`Failed to split: ${err.response?.data?.detail || err.message}`)
           }
         } else if (editingMode.type === 'adjust-start') {
           // Adjust start boundary
@@ -1284,10 +1288,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
             await userSegmentsAPI.adjustBoundary(editingMode.segmentId, 'start', clickedTime)
             await fetchUserSegments()
             setEditingMode(null)
-            alert('Boundary adjusted successfully!')
+            toast.success('Boundary adjusted successfully!')
           } catch (err: any) {
             console.error('Error adjusting boundary:', err)
-            alert(`Failed to adjust: ${err.response?.data?.detail || err.message}`)
+            toast.error(`Failed to adjust: ${err.response?.data?.detail || err.message}`)
           }
         } else if (editingMode.type === 'adjust-end') {
           // Adjust end boundary
@@ -1295,10 +1299,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
             await userSegmentsAPI.adjustBoundary(editingMode.segmentId, 'end', clickedTime)
             await fetchUserSegments()
             setEditingMode(null)
-            alert('Boundary adjusted successfully!')
+            toast.success('Boundary adjusted successfully!')
           } catch (err: any) {
             console.error('Error adjusting boundary:', err)
-            alert(`Failed to adjust: ${err.response?.data?.detail || err.message}`)
+            toast.error(`Failed to adjust: ${err.response?.data?.detail || err.message}`)
           }
         }
         return
@@ -1334,7 +1338,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
     pitchCount?: number
   }) => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('save segment')
       return
     }
 
@@ -1377,10 +1381,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
           is_technical: isTechnical,
           difficulty: difficulty || undefined,
           pitch_count: pitchCount,
-          terrain_factor: terrainFactor,
-          pack_weight_override_lbs: packWeightOverride ? Number(packWeightOverride) : undefined
+          terrain_factor: currentEditingValues?.terrainFactor ?? activity.terrain_factor ?? 1.1,
+          pack_weight_override_lbs: currentEditingValues?.packWeightOverride ? Number(currentEditingValues.packWeightOverride) : undefined
         })
-        alert('Segment updated successfully!')
+        toast.success('Segment updated successfully!')
       } else {
         // Create new segment
         await userSegmentsAPI.create(activity.activity_id, {
@@ -1390,10 +1394,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
           is_technical: isTechnical,
           difficulty: difficulty || undefined,
           pitch_count: pitchCount,
-          terrain_factor: terrainFactor,
-          pack_weight_override_lbs: packWeightOverride ? Number(packWeightOverride) : undefined
+          terrain_factor: currentEditingValues?.terrainFactor ?? activity.terrain_factor ?? 1.1,
+          pack_weight_override_lbs: currentEditingValues?.packWeightOverride ? Number(currentEditingValues.packWeightOverride) : undefined
         })
-        alert('Segment created successfully!')
+        toast.success('Segment created successfully!')
       }
 
       // Refresh segments list
@@ -1405,7 +1409,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
       setSegmentTimeRange(null)
     } catch (err) {
       console.error('Error saving segment:', err)
-      alert(`Failed to save segment: ${err}`)
+      toast.error(`Failed to save segment: ${err}`)
     }
   }
 
@@ -1416,7 +1420,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
     pitchCount?: number
   }) => {
     if (!isAdmin) {
-      alert('This feature is disabled in Viewer mode')
+      showViewerModeToast('create segment')
       return
     }
 
@@ -1460,10 +1464,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
         is_technical: isTechnical,
         difficulty: difficulty || undefined,
         pitch_count: pitchCount,
-        terrain_factor: terrainFactor,
-        pack_weight_override_lbs: packWeightOverride ? Number(packWeightOverride) : undefined
+        terrain_factor: currentEditingValues?.terrainFactor ?? activity.terrain_factor ?? 1.1,
+        pack_weight_override_lbs: currentEditingValues?.packWeightOverride ? Number(currentEditingValues.packWeightOverride) : undefined
       })
-      alert('Segment created successfully!')
+      toast.success('Segment created successfully!')
 
       // Refresh segments list
       await fetchUserSegments()
@@ -1473,7 +1477,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
       setSelectedPointIndices([])
     } catch (err) {
       console.error('Error saving segment:', err)
-      alert(`Failed to save segment: ${err}`)
+      toast.error(`Failed to save segment: ${err}`)
     }
   }
 
@@ -1486,10 +1490,10 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
       if (selectedSegmentId === segmentId) {
         setSelectedSegmentId(null)
       }
-      alert('Segment deleted successfully!')
+      toast.success('Segment deleted successfully!')
     } catch (err) {
       console.error('Error deleting segment:', err)
-      alert(`Failed to delete segment: ${err}`)
+      toast.error(`Failed to delete segment: ${err}`)
     }
   }
 
@@ -1542,10 +1546,9 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
           }
 
           // Silently update without alert
+          // Note: start_time/end_time changes use adjustBoundary API, not update
           await userSegmentsAPI.update(editingSegmentId, {
             segment_type: segmentType,
-            start_time: segmentTimeRange.start,
-            end_time: segmentTimeRange.end,
             is_technical: isTechnical,
             difficulty: currentEditingValues.difficulty || undefined,
             pitch_count: currentEditingValues.pitchCount,
@@ -1598,10 +1601,9 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
           }
 
           // Silently update without alert
+          // Note: start_time/end_time changes use adjustBoundary API, not update
           await userSegmentsAPI.update(editingSegmentId, {
             segment_type: segmentType,
-            start_time: segmentTimeRange.start,
-            end_time: segmentTimeRange.end,
             is_technical: isTechnical,
             difficulty: currentEditingValues.difficulty || undefined,
             pitch_count: currentEditingValues.pitchCount,
