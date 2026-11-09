@@ -209,7 +209,7 @@ def build_and_fit_pooled_model(
             tune=tune,
             chains=chains,
             random_seed=random_seed,
-            target_accept=0.95,
+            target_accept=0.98,  # Increased from 0.95 to eliminate divergences on Linux
             nuts_sampler="numpyro",
             nuts_sampler_kwargs={"nuts_kwargs": {"max_tree_depth": 12}},
             progressbar=False,
