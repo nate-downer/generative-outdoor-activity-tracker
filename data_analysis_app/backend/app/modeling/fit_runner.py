@@ -3,6 +3,7 @@ reporting, and persists each fit as a distinct historical run so past fits can b
 browsed and compared rather than overwritten.
 """
 import json
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -17,8 +18,11 @@ from .locomotion_model import SEGMENT_TYPES, EFFORT_SEGMENT_TYPES, build_and_fit
 from .rest_model import build_and_fit_rest_model
 from .diagnostics import pooled_diagnostics, rest_diagnostics
 
-TRACE_DIR = Path(__file__).resolve().parent / "traces"
-TRACE_DIR.mkdir(exist_ok=True)
+# Configurable trace directory for persistent storage on mounted volumes
+# In production: set TRACE_DIR=/data/traces to use persistent disk
+# In development: defaults to local traces/ directory
+TRACE_DIR = Path(os.environ.get("TRACE_DIR", str(Path(__file__).resolve().parent / "traces")))
+TRACE_DIR.mkdir(exist_ok=True, parents=True)
 
 RUNS_DIR = TRACE_DIR / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
