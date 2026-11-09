@@ -163,11 +163,13 @@ def run_fit(db_session_factory, n_recent_activities: Optional[int] = None) -> No
         loco_df["log_effort"] = np.log(loco_df["effort"] + 1e-6)
 
         _set_step(2)
-        loco_fit = build_and_fit_pooled_model(loco_df)
+        # Reduced from 1000 draws/4 chains to 500 draws/2 chains for production deployment
+        # with limited RAM - still 1000 total samples, sufficient for prediction
+        loco_fit = build_and_fit_pooled_model(loco_df, draws=500, chains=2)
         diagnostics = pooled_diagnostics(loco_fit)
 
         _set_step(3)
-        rest_fit = build_and_fit_rest_model(rest_df)
+        rest_fit = build_and_fit_rest_model(rest_df, draws=500, chains=2)
 
         _set_step(4)
         diagnostics.update(rest_diagnostics(rest_fit))
