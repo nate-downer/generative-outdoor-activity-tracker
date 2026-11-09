@@ -44,15 +44,22 @@ def build_and_fit_rest_model(
         mu = alpha + beta_distance * distance_std + beta_elevation * elevation_std + covariate_term
         pm.Normal("rest_obs", mu=mu, sigma=sigma, observed=y)
 
-        idata = pm.sample(
-            draws=draws,
-            tune=tune,
-            chains=chains,
-            random_seed=random_seed,
-            target_accept=0.98,  # Increased from 0.9 to eliminate divergences on Linux
-            nuts_sampler="numpyro",
-            progressbar=False,
-        )
+        # Sequential chain sampling for memory-constrained environments
+        import arviz as az
+        chain_idatas = []
+        for chain_id in range(chains):
+            chain_idata = pm.sample(
+                draws=draws,
+                tune=tune,
+                chains=1,
+                random_seed=random_seed + chain_id,
+                target_accept=0.98,
+                nuts_sampler="numpyro",
+                progressbar=False,
+            )
+            chain_idatas.append(chain_idata)
+
+        idata = az.concat(chain_idatas, dim="chain")
 
     return {
         "idata": idata,

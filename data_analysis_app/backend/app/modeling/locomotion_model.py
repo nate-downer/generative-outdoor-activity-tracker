@@ -204,16 +204,26 @@ def build_and_fit_pooled_model(
         )
         pm.Normal("log_duration_obs", mu=mu, sigma=sigma_duration, observed=log_duration)
 
-        idata = pm.sample(
-            draws=draws,
-            tune=tune,
-            chains=chains,
-            random_seed=random_seed,
-            target_accept=0.98,  # Increased from 0.95 to eliminate divergences on Linux
-            nuts_sampler="numpyro",
-            nuts_sampler_kwargs={"nuts_kwargs": {"max_tree_depth": 12}},
-            progressbar=False,
-        )
+        # Sequential chain sampling for memory-constrained environments:
+        # Run chains one at a time instead of in parallel to reduce peak memory by ~75%
+        # while maintaining full 4-chain convergence diagnostics
+        import arviz as az
+        chain_idatas = []
+        for chain_id in range(chains):
+            chain_idata = pm.sample(
+                draws=draws,
+                tune=tune,
+                chains=1,
+                random_seed=random_seed + chain_id,  # Different seed per chain
+                target_accept=0.98,
+                nuts_sampler="numpyro",
+                nuts_sampler_kwargs={"nuts_kwargs": {"max_tree_depth": 12}},
+                progressbar=False,
+            )
+            chain_idatas.append(chain_idata)
+
+        # Combine chains into single InferenceData with proper chain dimension
+        idata = az.concat(chain_idatas, dim="chain")
 
     return {
         "idata": idata,
