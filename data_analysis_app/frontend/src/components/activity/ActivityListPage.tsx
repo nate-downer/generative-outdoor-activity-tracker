@@ -91,9 +91,9 @@ function ActivityListPage({ isPlanned, title, initialSelectedActivityId }: Activ
               </p>
             </div>
           ) : (
-            <div className="relative pl-16">
-              {/* Left vertical line - extends up to header box, behind it */}
-              <div className="absolute left-8 bottom-0 w-1 bg-accent-400 z-0" style={{ top: '-7.5rem' }}></div>
+            <div className="relative pl-0 md:pl-16">
+              {/* Left vertical line - extends up to header box, behind it. Hidden on mobile. */}
+              <div className="hidden md:block absolute left-8 bottom-0 w-1 bg-accent-400 z-0" style={{ top: '-7.5rem' }}></div>
 
               <div className="space-y-6">
                 {activities.map((activity) => (

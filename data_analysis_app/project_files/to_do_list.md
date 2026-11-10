@@ -343,13 +343,17 @@ NOTE: Instead of using the garmin-data-analysis repo for the public version of t
 - [x] The admin access is password protected
 - [x] The app is configured such that it can be hosted publicly
 - [x] Documentation on the new deployment pipeline is created
-- [ ] The app's code is migrated to a new repo called generative-outdoor-activity-tracker (user will do this manually)
+- [x] The app's code is migrated to a new repo called generative-outdoor-activity-tracker (user will do this manually)
 
 
 ### Aditional UI Updates
 
-- [ ] Better user / logout UI at the top of the window
-- [ ] Better / more consistent rejection mesages when in the vwier mode
+- [x] Better user / logout UI at the top of the window
+- [x] Better / more consistent rejection mesages when in the viewer mode
+- [x] Make things phone friendly... (might be a big one)
+- [x] Change the last photo.
+- [x] Switch to consulting email address
+- [x] Hide admin email address in the logged in banner
 
 
 ## Milestone 1.1 - Multiple client level users
@@ -361,6 +365,8 @@ Big things to think about:
 - How public data will work (to start it should just Nate's data in the viewr version)
 - Data sharing agreement so that we have permission to use people's data
 - Setting up new accounts (I think this should be invite only to start)
+- Is there a better way to do the modeling (i.e. can the models be run on the user's machiene instead of on the server)
+- How do we improve all the documentation and how to side of this?
 
 --------------------------------------------------------------------------------------
 
@@ -374,6 +380,7 @@ Big things to think about:
 - [x] Make the algorithims faster
 - [ ] Pubish and host app
 - [ ] Improve automted segment genneration
+- [ ] Have a summary stats file saved sepeartely in the data base so loading the summary stats in the analysis tab is faster
 - [ ] Add the ability to split and merge whole activities (allowing a planned route to be broken into multiple days, or an approach and descent to be joined together for example)
 
 

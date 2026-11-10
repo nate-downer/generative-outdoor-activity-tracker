@@ -19,12 +19,12 @@ interface ActivityListItemProps {
 function ActivityListItem({ activity, isSelected, onClick, onActivityUpdated, onDeleted }: ActivityListItemProps) {
   return (
     <div className="relative">
-      {/* Connector dot - centered on the vertical line */}
-      <div className="absolute top-8 w-5 h-5 rounded-full bg-white border-accent-500 shadow-md z-10 -translate-x-1/2"
+      {/* Connector dot - centered on the vertical line. Hidden on mobile. */}
+      <div className="hidden md:block absolute top-8 w-5 h-5 rounded-full bg-white border-accent-500 shadow-md z-10 -translate-x-1/2"
            style={{ borderWidth: '3px', left: 'calc(-2rem + 2px)' }}></div>
 
-      {/* Horizontal connector line from dot to box */}
-      <div className="absolute top-[2.625rem] h-0.5 bg-accent-400"
+      {/* Horizontal connector line from dot to box. Hidden on mobile. */}
+      <div className="hidden md:block absolute top-[2.625rem] h-0.5 bg-accent-400"
            style={{ left: 'calc(-2rem + 2px)', width: 'calc(2rem - 2px)' }}></div>
 
       {/* Activity Box */}
@@ -62,11 +62,6 @@ function ActivityListItem({ activity, isSelected, onClick, onActivityUpdated, on
               <div className="text-sm text-gray-500 uppercase tracking-wide">
                 {formatActivityType(activity.activity_type)}
               </div>
-              {activity.is_planned && (
-                <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded">
-                  Planned Route
-                </span>
-              )}
             </div>
 
             {/* Stats row */}

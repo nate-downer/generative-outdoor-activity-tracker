@@ -79,7 +79,7 @@ function LandingPage() {
               <p className="mt-1 text-sm text-gray-500">Generative Outdoor Activity Tracker</p>
             </div>
 
-            <div className="flex space-x-4">
+            <div className="hidden md:flex flex-col sm:flex-row gap-2 sm:gap-4">
               <button className="btn-primary" onClick={() => navigate('/plan-routes')}>
                 Explore the App
               </button>
@@ -91,65 +91,68 @@ function LandingPage() {
         </div>
       </header>
 
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 text-center">
-        <h2 className="text-7xl font-bold text-accent-600">Plan Expeditions with Analytically Rigorous Activity Tracking</h2>
-        <p className="mt-4 text-lg text-gray-500">See Nate Downer's advanced analysis</p>
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 pt-12 md:pt-28 text-center">
+        <h2 className="text-4xl md:text-5xl lg:text-7xl font-bold text-accent-600">Plan Expeditions with Analytically Rigorous Activity Tracking</h2>
+
+        {/* Mobile-only buttons below title */}
+        <div className="flex md:hidden flex-col gap-3 mt-6">
+          <button className="btn-primary" onClick={() => navigate('/plan-routes')}>
+            Explore the App
+          </button>
+          <button className="bg-gray-700 text-white px-6 py-3 rounded-lg font-medium hover:bg-gray-600 transition-colors" onClick={() => navigate('/login')}>
+            Admin Login
+          </button>
+        </div>
       </div>
 
       {/* Connects straight into the box's own center line below - keep this and the
           box's line flush (no top/bottom padding between them) so the orange line
-          reads as one continuous piece from here through the whole feature list. */}
-      <div className="w-1 h-20 bg-accent-500 mx-auto mt-6" />
+          reads as one continuous piece from here through the whole feature list.
+          Hidden on mobile, visible on desktop. */}
+      <div className="hidden md:block w-1 h-20 bg-accent-500 mx-auto mt-6" />
 
       {/* Same container width convention as AnalysisPage.tsx's <main>. */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8 mt-12 md:mt-0">
         <div className="bg-white rounded-lg shadow-md p-6 relative">
-          <div className="absolute left-1/2 top-0 bottom-0 w-1 -translate-x-1/2 bg-accent-500" />
+          {/* Orange vertical line - left side on mobile, center on desktop */}
+          <div className="absolute left-0 md:left-1/2 top-0 bottom-0 w-1 md:-translate-x-1/2 bg-accent-500" />
 
-          <div className="space-y-12">
+          <div className="space-y-12 pl-8 md:pl-0">
             {FEATURES.map((feature, index) => {
               const reversed = index % 2 === 1
 
-              const imageEl = (alignClass: string) => (
-                <div className={`max-w-[34rem] ${alignClass} rounded-lg shadow-md overflow-hidden`}>
-                  <img src={`/demo_images/${feature.image}`} alt={feature.title} className="w-full h-auto" />
-                </div>
-              )
-
-              const textEl = (alignClass: string) => (
-                <div className={`max-w-[24rem] ${alignClass}`}>
-                  <h3 className="text-gray-800 mb-3">{feature.title}</h3>
-                  {feature.body.map((paragraph, i) => (
-                    <p key={i} className="text-gray-700 mb-3 last:mb-0">
-                      {paragraph}
-                    </p>
-                  ))}
-                  {feature.cta && (
-                    <button className="btn-primary mt-2" onClick={() => navigate(feature.cta!.path)}>
-                      {feature.cta.label}
-                    </button>
-                  )}
-                </div>
-              )
-
               return (
-                <div key={feature.title} className="relative grid grid-cols-2 gap-8 items-center">
-                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
+                <div key={feature.title} className="relative">
+                  {/* Decorative dot - hidden on mobile, centered on desktop */}
+                  <div className="hidden md:block absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
 
-                  {/* Each row's left/right slot always hugs the center line (ml-auto in
-                      column 1, mr-auto in column 2) - alternate which content (image vs
-                      text) sits in which column so the layout zigzags row to row. */}
-                  {reversed ? (
-                    <>
-                      {textEl('ml-auto')}
-                      {imageEl('mr-auto')}
-                    </>
-                  ) : (
-                    <>
-                      {imageEl('ml-auto')}
-                      {textEl('mr-auto')}
-                    </>
-                  )}
+                  {/* Mobile: single column stacked (image → text)
+                      Desktop: 2-column grid with zigzag */}
+                  <div className="flex flex-col gap-6 md:grid md:grid-cols-2 md:gap-8 md:items-center">
+                    {/* Image - always first on mobile, alternates on desktop */}
+                    <div className={`max-w-[34rem] rounded-lg shadow-md overflow-hidden ${
+                      reversed ? 'md:order-2 md:mr-auto' : 'md:ml-auto'
+                    }`}>
+                      <img src={`/demo_images/${feature.image}`} alt={feature.title} className="w-full h-auto" />
+                    </div>
+
+                    {/* Text - always second on mobile, alternates on desktop */}
+                    <div className={`max-w-[24rem] ${
+                      reversed ? 'md:order-1 md:ml-auto' : 'md:mr-auto'
+                    }`}>
+                      <h3 className="text-gray-800 mb-3">{feature.title}</h3>
+                      {feature.body.map((paragraph, i) => (
+                        <p key={i} className="text-gray-700 mb-3 last:mb-0">
+                          {paragraph}
+                        </p>
+                      ))}
+                      {feature.cta && (
+                        <button className="btn-primary mt-2" onClick={() => navigate(feature.cta!.path)}>
+                          {feature.cta.label}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )
             })}
@@ -158,105 +161,118 @@ function LandingPage() {
 
         {/* Same connector style as the one above the first box - keeps the orange
             line reading as one continuous piece across both white boxes. */}
-        <div className="w-1 h-20 bg-accent-500 mx-auto" />
+        <div className="w-1 h-20 bg-accent-500 ml-0 md:mx-auto" />
 
         <div className="bg-white rounded-lg shadow-md px-6 py-12 relative">
-          <div className="absolute left-1/2 top-0 bottom-0 w-1 -translate-x-1/2 bg-accent-500" />
+          {/* Orange vertical line - left side on mobile, center on desktop */}
+          <div className="absolute left-0 md:left-1/2 top-0 bottom-0 w-1 md:-translate-x-1/2 bg-accent-500" />
 
-          <div className="space-y-12">
-            {/* About the Analyst - text left, image right */}
-            <div className="relative grid grid-cols-2 gap-8 items-center">
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
+          <div className="space-y-12 pl-8 md:pl-0">
+            {/* About the Analyst - mobile: image then text, desktop: text left image right */}
+            <div className="relative">
+              <div className="hidden md:block absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
 
-              <div className="max-w-[24rem] ml-auto">
-                <h3 className="text-gray-800 mb-3">About the Analyst</h3>
-                <p className="text-gray-700 mb-3">
-                  Nate Downer is an avid rock climber and data scientist, who loves finding new ways to use data to help make better decisions in the mountains.
-                </p>
-                <p className="text-gray-700 mb-3">
-                  After tracking his own mountain adventures for years, Nate realized he was lacking a tool to use that data to its full potential; so he built one!
-                </p>
-                <p className="text-gray-700">
-                  Professionally, Nate specializes in marketing analytics, and has four years of experience as a consultant for top automotive brands. He is based near Boulder Colorado.
-                </p>
-              </div>
-
-              <div className="max-w-[27.2rem] mr-auto">
-                <div className="rounded-lg shadow-md overflow-hidden">
-                  <img src="/demo_images/nate_downer.jpg" alt="Nate Downer" className="w-full h-auto" />
+              <div className="flex flex-col gap-6 md:grid md:grid-cols-2 md:gap-8 md:items-center">
+                {/* Image - first on mobile, right on desktop */}
+                <div className="max-w-[27.2rem] md:order-2 md:mr-auto">
+                  <div className="rounded-lg shadow-md overflow-hidden">
+                    <img src="/demo_images/nate_downer.jpg" alt="Nate Downer" className="w-full h-auto" />
+                  </div>
+                  <p className="mt-2 text-sm text-gray-400 text-center">
+                    From a Recon Hike before climbing Pedraforca in Northern Spain.
+                  </p>
                 </div>
-                <p className="mt-2 text-sm text-gray-400 text-center">
-                  From a Recon Hike before climbing Pedraforca in Northern Spain.
-                </p>
+
+                {/* Text - second on mobile, left on desktop */}
+                <div className="max-w-[24rem] md:order-1 md:ml-auto">
+                  <h3 className="text-gray-800 mb-3">About the Analyst</h3>
+                  <p className="text-gray-700 mb-3">
+                    Nate Downer is an avid rock climber and data scientist, who loves finding new ways to use data to help make better decisions in the mountains.
+                  </p>
+                  <p className="text-gray-700 mb-3">
+                    After tracking his own mountain adventures for years, Nate realized he was lacking a tool to use that data to its full potential; so he built one!
+                  </p>
+                  <p className="text-gray-700">
+                    Professionally, Nate specializes in marketing analytics, and has four years of experience as a consultant for top automotive brands. He is based near Boulder Colorado.
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* Methodology - image left, text right (alternates with the row above) */}
-            <div className="relative grid grid-cols-2 gap-8 items-center">
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
+            {/* Methodology - mobile: image then text, desktop: image left text right */}
+            <div className="relative">
+              <div className="hidden md:block absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
 
-              <div className="max-w-[34rem] ml-auto">
-                <div className="rounded-lg shadow-md overflow-hidden">
-                  <img src="/demo_images/methodology_01.jpg" alt="Methodology" className="w-full h-auto" />
+              <div className="flex flex-col gap-6 md:grid md:grid-cols-2 md:gap-8 md:items-center">
+                {/* Image - first on mobile, left on desktop */}
+                <div className="max-w-[34rem] md:ml-auto">
+                  <div className="rounded-lg shadow-md overflow-hidden">
+                    <img src="/demo_images/methodology_01.jpg" alt="Methodology" className="w-full h-auto" />
+                  </div>
+                  <p className="mt-2 text-sm text-gray-400 text-center">
+                    Leading the beautiful 3rd Pitch of the Cara Este of Aguja de le'S in Patagonia.
+                  </p>
                 </div>
-                <p className="mt-2 text-sm text-gray-400 text-center">
-                  Leading the beautiful 3rd Pitch of the Cara Este of Aguja de le'S in Patagonia.
-                </p>
-              </div>
 
-              <div className="max-w-[24rem] mr-auto">
-                <h3 className="text-gray-800 mb-3">Methodology</h3>
-                <p className="text-gray-700 mb-3">
-                  This app was designed and tested by Nate Downer; developed with assistance from Claude Code.
-                </p>
-                <p className="text-gray-700 mb-3">
-                  The project came about after Nate realized the level of data cleaning needed to build reliable predictive models for outdoor activities went beyond what he could achieve in R and Python alone. The ability to comprehensively clean and tag the activity data in an intuitive and visual way emerged as a requirement from the fundamental analytical work.
-                </p>
-                <p className="text-gray-700 mb-3">
-                  Since Nate is not a web developer, Claude Code was used to implement the app as seen here, based on his design and specifications.
-                </p>
-                <p className="text-gray-700 mb-3">
-                  Note: Using Claude Code to build a planning tool (and validating the performance of that tool before trusting it) is very differnt than simply asking an AI to plan your route for you. Please seek out qualified recomendations from experienced climbers, and don't use an AI to do your planning for you!
-                </p>
+                {/* Text - second on mobile, right on desktop */}
+                <div className="max-w-[24rem] md:mr-auto">
+                  <h3 className="text-gray-800 mb-3">Methodology</h3>
+                  <p className="text-gray-700 mb-3">
+                    This app was designed and tested by Nate Downer; developed with assistance from Claude Code.
+                  </p>
+                  <p className="text-gray-700 mb-3">
+                    The project came about after Nate realized the level of data cleaning needed to build reliable predictive models for outdoor activities went beyond what he could achieve in R and Python alone. The ability to comprehensively clean and tag the activity data in an intuitive and visual way emerged as a requirement from the fundamental analytical work.
+                  </p>
+                  <p className="text-gray-700 mb-3">
+                    Since Nate is not a web developer, Claude Code was used to implement the app as seen here, based on his design and specifications.
+                  </p>
+                  <p className="text-gray-700 mb-3">
+                    Note: Using Claude Code to build a planning tool (and validating the performance of that tool before trusting it) is very differnt than simply asking an AI to plan your route for you. Please seek out qualified recomendations from experienced climbers, and don't use an AI to do your planning for you!
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* Other Projects - text left, image right (alternates with Methodology above) */}
-            <div className="relative grid grid-cols-2 gap-8 items-center">
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
+            {/* Other Projects - mobile: image then text, desktop: text left image right */}
+            <div className="relative">
+              <div className="hidden md:block absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-accent-600 border-4 border-white shadow z-10" />
 
-              <div className="max-w-[24rem] ml-auto">
-                <h3 className="text-gray-800 mb-3">More Climbing Analysis</h3>
-                <p className="text-gray-700">
-                  Check out Nate's past analysis visualizing 38 years of accident data from the AAC to help climbers understand what risks are the most pertinent to their region or style of climbing.
-                </p>
-                <div className="mt-3 flex flex-col gap-2">
-                  <a
-                    href="https://public.tableau.com/app/profile/nate.downer/viz/MostCommonAccidentCausebyState/Dashboard12#1"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-nav block text-center"
-                  >
-                    Risk Factors by State
-                  </a>
-                  <a
-                    href="https://public.tableau.com/app/profile/nate.downer/viz/CausesofRockClimbingAccidents/MyRiskFactors"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-nav block text-center"
-                  >
-                    Risk Factors by Climbing Style
-                  </a>
+              <div className="flex flex-col gap-6 md:grid md:grid-cols-2 md:gap-8 md:items-center">
+                {/* Image - first on mobile, right on desktop */}
+                <div className="max-w-[34rem] md:order-2 md:mr-auto">
+                  <div className="rounded-lg shadow-md overflow-hidden">
+                    <img src="/demo_images/other_projects_01.jpg" alt="Other Projects" className="w-full h-auto" />
+                  </div>
+                  <p className="mt-2 text-sm text-gray-400 text-center">
+                    Play hard and be smart!
+                  </p>
                 </div>
-              </div>
 
-              <div className="max-w-[34rem] mr-auto">
-                <div className="rounded-lg shadow-md overflow-hidden">
-                  <img src="/demo_images/other_projects_01.jpg" alt="Other Projects" className="w-full h-auto" />
+                {/* Text - second on mobile, left on desktop */}
+                <div className="max-w-[24rem] md:order-1 md:ml-auto">
+                  <h3 className="text-gray-800 mb-3">More Climbing Analysis</h3>
+                  <p className="text-gray-700">
+                    Check out Nate's past analysis visualizing 38 years of accident data from the AAC to help climbers understand what risks are the most pertinent to their region or style of climbing.
+                  </p>
+                  <div className="mt-3 flex flex-col gap-2">
+                    <a
+                      href="https://public.tableau.com/app/profile/nate.downer/viz/MostCommonAccidentCausebyState/Dashboard12#1"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-nav block text-center"
+                    >
+                      Risk Factors by State
+                    </a>
+                    <a
+                      href="https://public.tableau.com/app/profile/nate.downer/viz/CausesofRockClimbingAccidents/MyRiskFactors"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-nav block text-center"
+                    >
+                      Risk Factors by Climbing Style
+                    </a>
+                  </div>
                 </div>
-                <p className="mt-2 text-sm text-gray-400 text-center">
-                  Play hard and be smart!
-                </p>
               </div>
             </div>
           </div>

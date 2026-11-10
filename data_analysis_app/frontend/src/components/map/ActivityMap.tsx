@@ -16,8 +16,35 @@ interface ActivityMapProps {
   segmentMode?: boolean
 }
 
+// Hook to detect screen size and calculate map center position
+// Desktop (≥1024px): 33%/29% - top-left area works well with 3-column layout
+// Mobile (<1024px): 50%/40% - more centered for stacked single-column layout
+function useMapCenterPosition() {
+  const [position, setPosition] = useState({ x: 0.33, y: 0.29 })
+
+  useEffect(() => {
+    const updatePosition = () => {
+      const isDesktop = window.innerWidth >= 1024 // lg breakpoint
+      setPosition(
+        isDesktop
+          ? { x: 0.33, y: 0.29 }  // Desktop: top-left area (current)
+          : { x: 0.50, y: 0.25 }  // Mobile: more centered
+      )
+    }
+
+    // Set initial position
+    updatePosition()
+
+    // Update on resize
+    window.addEventListener('resize', updatePosition)
+    return () => window.removeEventListener('resize', updatePosition)
+  }, [])
+
+  return position
+}
+
 // Custom zoom control that zooms around the crosshair point
-function CustomZoomControl() {
+function CustomZoomControl({ centerPosition }: { centerPosition: { x: number; y: number } }) {
   const map = useMap()
   const [currentZoom, setCurrentZoom] = useState(map.getZoom())
   const [isZooming, setIsZooming] = useState(false)
@@ -46,9 +73,9 @@ function CustomZoomControl() {
     setIsZooming(true)
 
     const size = map.getSize()
-    // Calculate the exact pixel position of the crosshairs
-    const visibleCenterX = size.x * 0.33  // 33% from left
-    const visibleCenterY = size.y * 0.29  // 29% from top
+    // Calculate the exact pixel position of the crosshairs (responsive)
+    const visibleCenterX = size.x * centerPosition.x
+    const visibleCenterY = size.y * centerPosition.y
 
     // Convert this pixel position to lat/lng coordinates
     const containerPoint = (map as any).containerPointToLatLng([visibleCenterX, visibleCenterY])
@@ -234,12 +261,16 @@ function FitBounds({ points }: { points: Point[] }) {
         points.map(p => [p.lat, p.lon] as [number, number])
       )
 
-      // Asymmetric padding to center route near crosshair (33%, 29%)
-      // More right/bottom padding shifts content left/up toward crosshair
-      // Increased padding for more zoomed-out view
+      // Responsive padding to center route on crosshair position
+      // Desktop: Asymmetric padding pushes route toward top-left crosshair
+      // Mobile: More balanced padding for centered crosshair
+      const isDesktop = window.innerWidth >= 1024
+      const padding = isDesktop
+        ? { paddingTopLeft: [100, 80] as [number, number], paddingBottomRight: [400, 450] as [number, number] }
+        : { paddingTopLeft: [50, 50] as [number, number], paddingBottomRight: [50, 550] as [number, number] }
+
       map.fitBounds(bounds, {
-        paddingTopLeft: [100, 80],
-        paddingBottomRight: [400, 450]
+        ...padding
       })
       hasInitializedRef.current = true
     }
@@ -250,6 +281,7 @@ function FitBounds({ points }: { points: Point[] }) {
 
 function ActivityMap({ points, isPointSelected = [], editMode = false, onPointClick, onBoxSelect, highlightSegment = null, segmentMode = false }: ActivityMapProps) {
   const mapRef = useRef(null)
+  const mapCenterPosition = useMapCenterPosition()
 
   if (points.length === 0) {
     return (
@@ -286,12 +318,12 @@ function ActivityMap({ points, isPointSelected = [], editMode = false, onPointCl
 
   return (
     <div className="h-full w-full rounded overflow-hidden relative">
-      {/* Crosshairs showing zoom center point */}
+      {/* Crosshairs showing zoom center point - responsive position */}
       <div
         className="absolute pointer-events-none z-[2000]"
         style={{
-          left: '33%',
-          top: '29%',
+          left: `${mapCenterPosition.x * 100}%`,
+          top: `${mapCenterPosition.y * 100}%`,
           transform: 'translate(-50%, -50%)'
         }}
       >
@@ -379,7 +411,7 @@ function ActivityMap({ points, isPointSelected = [], editMode = false, onPointCl
         })}
 
         {/* Custom zoom control */}
-        <CustomZoomControl />
+        <CustomZoomControl centerPosition={mapCenterPosition} />
 
         {/* Box selection for multi-select */}
         {editMode && onBoxSelect && (

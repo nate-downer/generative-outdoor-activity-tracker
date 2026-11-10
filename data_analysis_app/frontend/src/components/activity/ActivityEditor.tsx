@@ -903,7 +903,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
   const [editMode, setEditMode] = useState(false)
   const [selectedPointIndices, setSelectedPointIndices] = useState<number[]>([])
   const [removing, setRemoving] = useState(false)
-  const [activePanel, setActivePanel] = useState<'metadata' | 'waypoints' | 'segments' | 'predict' | null>('metadata')
+  const [activePanel, setActivePanel] = useState<'metadata' | 'waypoints' | 'segments' | 'predict' | null>(null)
   const [predictionResult, setPredictionResult] = useState<PredictionResult | null>(null)
 
   // Load the most recently saved prediction (if any) so the distributions/charts
@@ -1771,11 +1771,11 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
         </div>
 
         {/* Floating Content Grid - on top of map */}
-        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 pointer-events-none">
+        <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 p-3 pointer-events-none">
         {/* Left Column - Charts (2/3 width) */}
         <div className={`lg:col-span-2 space-y-6 ${editingMode ? '-mt-10' : ''}`}>
           {/* Empty space in top-left for map visibility - increased for more map space */}
-          <div className="h-[500px]"></div>
+          <div className="h-[350px] lg:h-[500px]"></div>
 
           {/* Editing Mode Prompt + Charts - wrapped together to remove gap */}
           <div className="pointer-events-auto">
@@ -1799,7 +1799,7 @@ function ActivityEditor({ activity, onActivityUpdated, onDeleted }: ActivityEdit
             )}
 
             {/* Charts - floating white box */}
-            <div className={`bg-white rounded-lg shadow-lg p-4 space-y-6 ${
+            <div className={`bg-white rounded-lg shadow-lg p-2 space-y-6 ${
               editingMode ? 'ring-4 ring-blue-500' : ''
             } ${editingMode ? 'rounded-t-none' : ''}`}>
             {activePanel === 'predict' ? (
