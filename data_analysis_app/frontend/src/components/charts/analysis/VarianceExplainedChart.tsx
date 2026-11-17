@@ -32,6 +32,7 @@ function VarianceExplainedChart({ data }: VarianceExplainedChartProps) {
 
   const hasCoefficients = data.some((d) => d.coefficient_median !== undefined);
 
+  const totalFeatures = data.length;
   const chartData = data
     .map((d) => ({
       name: d.label,
@@ -43,16 +44,24 @@ function VarianceExplainedChart({ data }: VarianceExplainedChartProps) {
         (d.coefficient_high ?? 0) - (d.coefficient_median ?? 0),
       ] as [number, number],
     }))
-    .sort((a, b) => b.value - a.value); // most impactful at top
+    .sort((a, b) => b.value - a.value) // most impactful at top
+    .slice(0, 10); // Limit to top 10 features
 
   const height = Math.max(220, chartData.length * 38);
+  const showingTopN = totalFeatures > 10;
 
   return (
-    <div className="flex gap-1">
-      <div className={hasCoefficients ? 'flex-[2] min-w-0' : 'flex-1 min-w-0'}>
-        {hasCoefficients && (
-          <p className="text-xs text-gray-400 text-center mb-1">% Contribution</p>
-        )}
+    <div>
+      {showingTopN && (
+        <p className="text-xs text-gray-500 mb-2 text-center">
+          Showing top 10 of {totalFeatures} features
+        </p>
+      )}
+      <div className="flex gap-1">
+        <div className={hasCoefficients ? 'flex-[2] min-w-0' : 'flex-1 min-w-0'}>
+          {hasCoefficients && (
+            <p className="text-xs text-gray-400 text-center mb-1">% Contribution</p>
+          )}
         <ResponsiveContainer width="100%" height={height}>
           <BarChart data={chartData} layout="vertical" margin={sharedMargin}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -118,6 +127,7 @@ function VarianceExplainedChart({ data }: VarianceExplainedChartProps) {
           </ResponsiveContainer>
         </div>
       )}
+      </div>
     </div>
   );
 }

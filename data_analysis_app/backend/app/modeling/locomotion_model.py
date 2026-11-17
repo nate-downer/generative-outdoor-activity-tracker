@@ -63,6 +63,7 @@ SHARED_COVARIATES = [
     "terrain_factor_nontechnical",
     "cum_distance_prior_mi",
     "cum_elevation_prior_ft",
+    "starting_elevation_ft",
     "party_size",
     "is_hiking",
     "is_running",

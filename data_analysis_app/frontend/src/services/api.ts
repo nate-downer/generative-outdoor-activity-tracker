@@ -222,8 +222,14 @@ export const gpxAPI = {
 // Model fitting API
 export const modelsAPI = {
   // Start fitting the hierarchical time-prediction models (runs as a background task)
-  fit: async (nRecentActivities?: number | null): Promise<{ status: string }> => {
-    const response = await apiClient.post('/models/fit', { n_recent_activities: nRecentActivities ?? null });
+  fit: async (options: {
+    model_nickname?: string;
+    prior_run_id?: string;
+    prior_strength?: number;
+    training_activity_ids: string[];
+    validation_activity_ids: string[];
+  }): Promise<{ status: string }> => {
+    const response = await apiClient.post('/models/fit', options);
     return response.data;
   },
 
@@ -234,14 +240,28 @@ export const modelsAPI = {
   },
 
   // List historical fit runs, newest first
-  getRuns: async (): Promise<ModelRunSummary[]> => {
-    const response = await apiClient.get<ModelRunSummary[]>('/models/runs');
+  getRuns: async (includeArchived: boolean = false): Promise<ModelRunSummary[]> => {
+    const response = await apiClient.get<ModelRunSummary[]>('/models/runs', {
+      params: { include_archived: includeArchived },
+    });
     return response.data;
   },
 
   // Fetch diagnostics for one specific run
   getRunDiagnostics: async (runId: string): Promise<AllModelDiagnostics> => {
     const response = await apiClient.get<AllModelDiagnostics>(`/models/runs/${runId}/diagnostics`);
+    return response.data;
+  },
+
+  // Archive a model run
+  archiveRun: async (runId: string): Promise<{ status: string }> => {
+    const response = await apiClient.patch(`/models/runs/${runId}/archive`);
+    return response.data;
+  },
+
+  // Unarchive a model run
+  unarchiveRun: async (runId: string): Promise<{ status: string }> => {
+    const response = await apiClient.patch(`/models/runs/${runId}/unarchive`);
     return response.data;
   },
 };

@@ -5,7 +5,7 @@ import pymc as pm
 
 from .locomotion_model import _standardize
 
-EXTRA_COVARIATES = ["party_size", "is_hiking", "is_running", "pct_technical_elevation_gain"]
+EXTRA_COVARIATES = ["party_size", "is_hiking", "is_running", "pct_technical_elevation_gain", "max_elevation_ft"]
 
 
 def build_and_fit_rest_model(

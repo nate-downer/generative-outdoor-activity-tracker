@@ -10,6 +10,8 @@ interface ModelRunsTableProps {
   runs: ModelRunSummary[];
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
+  onArchive: (runId: string) => Promise<void>;
+  onUnarchive: (runId: string) => Promise<void>;
 }
 
 const GROUP_LABELS: Record<string, string> = {
@@ -21,13 +23,17 @@ const GROUP_LABELS: Record<string, string> = {
   rest: 'Rest',
 };
 
-const formatRunLabel = (createdAt: string) =>
-  new Date(createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+const formatRunLabel = (run: ModelRunSummary) => {
+  if (run.model_nickname) {
+    return run.model_nickname;
+  }
+  return new Date(run.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+};
 
 const formatRmse = (value: number | undefined) =>
   typeof value === 'number' ? `${value.toFixed(1)}%` : '—';
 
-function ModelRunsTable({ runs, selectedRunId, onSelectRun }: ModelRunsTableProps) {
+function ModelRunsTable({ runs, selectedRunId, onSelectRun, onArchive, onUnarchive }: ModelRunsTableProps) {
   if (runs.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow-md p-6 text-center text-gray-500 text-sm">
@@ -48,29 +54,49 @@ function ModelRunsTable({ runs, selectedRunId, onSelectRun }: ModelRunsTableProp
                 {GROUP_LABELS[group]} RMSE%
               </th>
             ))}
+            <th className="px-4 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
           {runs.map((run) => {
             const isSelected = run.run_id === selectedRunId;
+            const isArchived = run.is_archived || false;
             return (
               <tr
                 key={run.run_id}
                 onClick={() => onSelectRun(run.run_id)}
                 className={`cursor-pointer border-b border-gray-100 last:border-0 transition-colors ${
-                  isSelected ? 'bg-orange-50' : 'hover:bg-gray-50'
+                  isSelected ? 'bg-orange-50' : isArchived ? 'bg-gray-100 opacity-60' : 'hover:bg-gray-50'
                 }`}
               >
-                <td className="px-4 py-3 text-gray-800 whitespace-nowrap">
-                  {formatRunLabel(run.created_at)}
+                <td className={`px-4 py-3 whitespace-nowrap ${isArchived ? 'text-gray-500' : 'text-gray-800'}`}>
+                  {formatRunLabel(run)}
+                  {isArchived && <span className="ml-2 text-xs text-gray-500 font-medium">(archived)</span>}
                   {isSelected && <span className="ml-2 text-xs text-orange-600 font-medium">(viewing)</span>}
                 </td>
-                <td className="px-4 py-3 text-right text-gray-700">{run.n_activities_total}</td>
+                <td className={`px-4 py-3 text-right ${isArchived ? 'text-gray-500' : 'text-gray-700'}`}>
+                  {run.n_activities_total}
+                </td>
                 {MODEL_GROUP_ORDER.map((group) => (
-                  <td key={group} className="px-4 py-3 text-right text-gray-700">
+                  <td key={group} className={`px-4 py-3 text-right ${isArchived ? 'text-gray-500' : 'text-gray-700'}`}>
                     {formatRmse(run.rmse_pct[group])}
                   </td>
                 ))}
+                <td className="px-4 py-3 text-right">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isArchived) {
+                        onUnarchive(run.run_id);
+                      } else {
+                        onArchive(run.run_id);
+                      }
+                    }}
+                    className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-100 transition-colors"
+                  >
+                    {isArchived ? 'Unarchive' : 'Archive'}
+                  </button>
+                </td>
               </tr>
             );
           })}

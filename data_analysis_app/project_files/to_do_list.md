@@ -356,7 +356,66 @@ NOTE: Instead of using the garmin-data-analysis repo for the public version of t
 - [x] Hide admin email address in the logged in banner
 
 
-## Milestone 1.1 - Multiple client level users
+
+## Milestone 1.1 - Improving Model Outputs and Visuals
+
+List of key things to do:
+- [ ] Include starting elevation in the models.
+- [x] Enable the user to select activities to exclude from the model or use as "out of sample" validation.
+- [x] Hide mode selection stuff in a new drop down at the top of the model
+- [ ] Add more diagnostic outputs in a drop down at the bottom of each model's plot.
+- [ ] Add more plots to the activity analysis page
+- [ ] Create persistent tables that store summarized activity data (so it loads faster)
+- [ ] Implement some kind of lazy load on that page (possibly hide the section by default)
+
+### Additional model controls
+
+In a new UI section underneath the "Time Predictions Model" header I want to include the following controls:
+
+Column 1:
+- Model Nickname (a short text field, that loads with the date time by default)
+- Use Priors from (a drop down where the user can select to use the outputs from a differnt model as priors)
+- Strength of priors (a numerical value where the user can spcify how strong the priors shoudl be applied) 
+
+Column 2:
+- Training Sample (a vertically scrolling list filling the column. The user can interactively select which models are included in the sample. All are included by default)
+
+Column 3:
+- Validation Sample (a vertically scrolling list filling the column. The user can interactively select which models are used for out of sample validation. None are included by default. selecting a model as par of the out of sample validation removes it from the training sample)
+
+This superceeds the "include n most recent models" options so that can be removed.
+
+All of this should be in a new section that can "drop down" if the user clicks into it.
+
+
+### Additional Diagnostic Outputs
+
+I also want to add drop downs below each model visual output seciton that has additional diagnostic outputs.
+
+The key thing I want to include is a summary of what all the priors, prior strenghts, and tuned values are. We can star by just displaying them as a table.
+
+If there are other visuals that are helpful to understanding the structure or performance of the bayseian model, please suggest them.
+
+Because we are including this more granular output, we can also shorten the plot with the summary of key features to only show the top 10 features. We can add a text note saying the top 10/n features included. 
+
+I would also like a way to make the out of sample validation points stick out on the performance plots. can we make the dark black?
+
+
+### Model Summary section
+
+I would like to add the ability to "Archive" models that are no longer useful. These should be hidden from the table by default, but there should be a button that allows me to "Show Archived Models"
+
+Can you also use the new nicknames in the table that has all the models (in addition to the run time)?
+
+
+### Update the Analysis Page
+
+We need it to load faster, so I would like to implement the following changes:
+- Start by having the sections with diagnostics for the differnt segment types collapsed (i.e. one section for totals, one for climbs)
+- Implement a new table in the backend that stores the summarized data used to create the plots s
+
+
+## Milestone 1.2 - Multiple client level users
 
 Big things to think about:
 
@@ -367,6 +426,8 @@ Big things to think about:
 - Setting up new accounts (I think this should be invite only to start)
 - Is there a better way to do the modeling (i.e. can the models be run on the user's machiene instead of on the server)
 - How do we improve all the documentation and how to side of this?
+
+
 
 --------------------------------------------------------------------------------------
 

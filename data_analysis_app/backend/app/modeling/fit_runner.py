@@ -11,12 +11,14 @@ from typing import List, Optional
 
 import arviz as az
 import numpy as np
+import pandas as pd
 
 from .data import extract_locomotion_dataframe, extract_rest_dataframe
 from .effort import calibrate_effort_curve, compute_effort
 from .locomotion_model import SEGMENT_TYPES, EFFORT_SEGMENT_TYPES, build_and_fit_pooled_model
 from .rest_model import build_and_fit_rest_model
 from .diagnostics import pooled_diagnostics, rest_diagnostics
+from .diagnostics_parameters import locomotion_parameter_diagnostics, rest_parameter_diagnostics
 
 # Configurable trace directory for persistent storage on mounted volumes
 # In production: set TRACE_DIR=/data/traces to use persistent disk
@@ -93,12 +95,57 @@ def _append_run_index_entry(entry: dict) -> None:
     RUNS_INDEX_PATH.write_text(json.dumps(runs))
 
 
-def list_runs() -> List[dict]:
-    """Run summaries (run_id, created_at, n_activities_total, rmse_pct per model), newest first."""
+def list_runs(include_archived: bool = False) -> List[dict]:
+    """
+    Run summaries (run_id, created_at, n_activities_total, rmse_pct per model), newest first.
+
+    Args:
+        include_archived: If True, include archived runs. If False, exclude them.
+    """
     runs = _read_runs_index()
     for run in runs:
         run["is_predictable"] = (_run_dir(run["run_id"]) / "metadata.json").exists()
+        # Ensure is_archived field exists (default to False for old runs)
+        if "is_archived" not in run:
+            run["is_archived"] = False
+
+    # Filter out archived runs unless requested
+    if not include_archived:
+        runs = [r for r in runs if not r.get("is_archived", False)]
+
     return sorted(runs, key=lambda r: r["created_at"], reverse=True)
+
+
+def archive_run(run_id: str) -> bool:
+    """
+    Archive a model run. Archived runs are hidden by default in list_runs().
+
+    Returns:
+        True if the run was archived, False if not found.
+    """
+    runs = _read_runs_index()
+    for run in runs:
+        if run["run_id"] == run_id:
+            run["is_archived"] = True
+            RUNS_INDEX_PATH.write_text(json.dumps(runs))
+            return True
+    return False
+
+
+def unarchive_run(run_id: str) -> bool:
+    """
+    Unarchive a model run, making it visible again in list_runs().
+
+    Returns:
+        True if the run was unarchived, False if not found.
+    """
+    runs = _read_runs_index()
+    for run in runs:
+        if run["run_id"] == run_id:
+            run["is_archived"] = False
+            RUNS_INDEX_PATH.write_text(json.dumps(runs))
+            return True
+    return False
 
 
 def load_run_diagnostics(run_id: str) -> Optional[dict]:
@@ -120,7 +167,15 @@ def run_dir(run_id: str) -> Path:
     return _run_dir(run_id)
 
 
-def run_fit(db_session_factory, n_recent_activities: Optional[int] = None) -> None:
+def run_fit(
+    db_session_factory,
+    model_nickname: Optional[str] = None,
+    prior_run_id: Optional[str] = None,
+    prior_strength: Optional[float] = None,
+    training_activity_ids: Optional[List[str]] = None,
+    validation_activity_ids: Optional[List[str]] = None,
+    n_recent_activities: Optional[int] = None,  # Legacy parameter
+) -> None:
     """
     Fit all time-prediction models and persist results as a new historical run.
 
@@ -132,8 +187,13 @@ def run_fit(db_session_factory, n_recent_activities: Optional[int] = None) -> No
     Runs inside a FastAPI background task, so it takes a session factory (not a live
     Session) since the request that triggered it may have already returned.
 
-    `n_recent_activities`, if given, restricts training data to just the N
-    most-recently-dated real activities instead of the full history.
+    Parameters:
+    - `model_nickname`: Optional name for this model run
+    - `prior_run_id`: Use posterior from this run as priors (transfer learning)
+    - `prior_strength`: How much weight to give priors (0=ignore, 1=one observation, 2+=strong)
+    - `training_activity_ids`: Explicit list of activity IDs to train on
+    - `validation_activity_ids`: Activity IDs to hold out for validation
+    - `n_recent_activities`: (Legacy) Restrict to N most recent activities
     """
     with _status_lock:
         if _status["state"] == "running":
@@ -144,8 +204,16 @@ def run_fit(db_session_factory, n_recent_activities: Optional[int] = None) -> No
     db = db_session_factory()
     try:
         _set_step(0)
-        loco_df = extract_locomotion_dataframe(db, n_recent_activities)
-        rest_df = extract_rest_dataframe(db, n_recent_activities)
+        # Extract data for BOTH training and validation activities
+        # (validation activities are included in diagnostics but excluded from fitting)
+        all_activity_ids = None
+        if training_activity_ids or validation_activity_ids:
+            training_set = set(training_activity_ids) if training_activity_ids else set()
+            validation_set = set(validation_activity_ids) if validation_activity_ids else set()
+            all_activity_ids = list(training_set | validation_set)
+
+        loco_df = extract_locomotion_dataframe(db, n_recent_activities=n_recent_activities, activity_ids=all_activity_ids)
+        rest_df = extract_rest_dataframe(db, n_recent_activities=n_recent_activities, activity_ids=all_activity_ids)
 
         if loco_df.empty or rest_df.empty:
             raise ValueError("Not enough segment data to fit models.")
@@ -167,16 +235,51 @@ def run_fit(db_session_factory, n_recent_activities: Optional[int] = None) -> No
         loco_df["log_effort"] = np.log(loco_df["effort"] + 1e-6)
 
         _set_step(2)
+        # Filter to training data only for model fitting
+        # Validation data will be appended for diagnostics
+        validation_ids_set = set(validation_activity_ids) if validation_activity_ids else set()
+
+        if validation_ids_set:
+            # Fit on training data only (true out-of-sample)
+            loco_train = loco_df[~loco_df["activity_id"].isin(validation_ids_set)].copy()
+        else:
+            loco_train = loco_df.copy()
+
         # Use 4 chains for better convergence diagnostics (rhat)
         # Memory usage is fine (~80%), so we can use the full configuration
-        loco_fit = build_and_fit_pooled_model(loco_df, draws=1000, tune=1000, chains=4)
-        diagnostics = pooled_diagnostics(loco_fit)
+        loco_fit = build_and_fit_pooled_model(loco_train, draws=1000, tune=1000, chains=4)
+
+        # For diagnostics: append validation data to compute out-of-sample predictions
+        # The standardization params from training will be used for validation too
+        if validation_ids_set and not loco_df[loco_df["activity_id"].isin(validation_ids_set)].empty:
+            loco_fit["df"] = pd.concat([loco_train, loco_df[loco_df["activity_id"].isin(validation_ids_set)]], ignore_index=True)
+
+        # Pass validation IDs to mark validation points
+        diagnostics = pooled_diagnostics(loco_fit, validation_ids_set)
 
         _set_step(3)
-        rest_fit = build_and_fit_rest_model(rest_df, draws=1000, tune=1000, chains=4)
+        # Fit rest model on training data only
+        if validation_ids_set:
+            rest_train = rest_df[~rest_df["activity_id"].isin(validation_ids_set)].copy()
+        else:
+            rest_train = rest_df.copy()
+
+        rest_fit = build_and_fit_rest_model(rest_train, draws=1000, tune=1000, chains=4)
+
+        # Append validation data for diagnostics
+        if validation_ids_set and not rest_df[rest_df["activity_id"].isin(validation_ids_set)].empty:
+            rest_fit["df"] = pd.concat([rest_train, rest_df[rest_df["activity_id"].isin(validation_ids_set)]], ignore_index=True)
 
         _set_step(4)
-        diagnostics.update(rest_diagnostics(rest_fit))
+        diagnostics.update(rest_diagnostics(rest_fit, validation_ids_set))
+
+        # Extract parameter summaries and convergence diagnostics
+        loco_params = locomotion_parameter_diagnostics(loco_fit["idata"])
+        rest_params = rest_parameter_diagnostics(rest_fit["idata"])
+
+        # Add parameter diagnostics to each model group
+        diagnostics["_locomotion_parameters"] = loco_params
+        diagnostics["_rest_parameters"] = rest_params
 
         _set_step(5)
         run_dir = _run_dir(run_id)
@@ -214,9 +317,15 @@ def run_fit(db_session_factory, n_recent_activities: Optional[int] = None) -> No
         _append_run_index_entry({
             "run_id": run_id,
             "created_at": datetime.utcnow().isoformat(),
+            "model_nickname": model_nickname,
             "n_activities_total": len(activity_ids),
             "n_recent_activities_filter": n_recent_activities,
+            "prior_run_id": prior_run_id,
+            "prior_strength": prior_strength,
+            "n_training_activities": len(training_activity_ids) if training_activity_ids else len(activity_ids),
+            "n_validation_activities": len(validation_activity_ids) if validation_activity_ids else 0,
             "rmse_pct": rmse_pct,
+            "is_archived": False,
         })
 
         _set_status(state="done", step_index=len(FIT_STEPS), step_label="Done")

@@ -20,7 +20,10 @@ def _segment_type_5(segment_type: str, is_technical: bool) -> str:
 
 
 def extract_all_segments(
-    db: Session, n_recent_activities: Optional[int] = None, exclude_planned: bool = False
+    db: Session,
+    n_recent_activities: Optional[int] = None,
+    activity_ids: Optional[List[str]] = None,
+    exclude_planned: bool = False
 ) -> pd.DataFrame:
     """
     Pull every UserSegment with derived metrics and covariates, one row per
@@ -31,7 +34,8 @@ def extract_all_segments(
     to extract a specific *planned* route's own segments - set it True only for
     training-data extraction, where planned routes (no "actual" duration) don't belong.
 
-    If `n_recent_activities` is given (training-data use only), restricts to the N
+    If `activity_ids` is given, restricts to only those specific activities.
+    Otherwise, if `n_recent_activities` is given (legacy), restricts to the N
     most-recently-dated activities instead of the full history.
     """
     query = db.query(models.UserSegment, models.Activity).join(
@@ -40,7 +44,10 @@ def extract_all_segments(
     if exclude_planned:
         query = query.filter(models.Activity.is_planned == False)
 
-    if n_recent_activities is not None:
+    # Explicit activity ID list takes precedence over n_recent
+    if activity_ids is not None:
+        query = query.filter(models.Activity.activity_id.in_(activity_ids))
+    elif n_recent_activities is not None:
         recent_ids_query = db.query(models.Activity.activity_id)
         if exclude_planned:
             recent_ids_query = recent_ids_query.filter(models.Activity.is_planned == False)
@@ -52,6 +59,7 @@ def extract_all_segments(
     results = query.order_by(models.Activity.activity_id, models.UserSegment.start_time).all()
 
     points_cache: Dict[str, List[models.Point]] = {}
+    starting_elevation_cache: Dict[str, float] = {}
     rows = []
 
     for user_segment, activity in results:
@@ -63,6 +71,13 @@ def extract_all_segments(
                 .all()
             )
         points = points_cache[activity.activity_id]
+
+        # Cache starting elevation (first point's elevation) per activity
+        if activity.activity_id not in starting_elevation_cache:
+            if points:
+                starting_elevation_cache[activity.activity_id] = points[0].elevation_ft
+            else:
+                starting_elevation_cache[activity.activity_id] = 0.0
 
         metrics = calculate_segment_metrics(
             points=points, start_time=user_segment.start_time, end_time=user_segment.end_time
@@ -77,6 +92,9 @@ def extract_all_segments(
             terrain_factor = activity.terrain_factor or 1.1
 
         local_start = convert_to_local_time(user_segment.start_time, activity.timezone)
+
+        # Get max elevation for this activity (for rest model)
+        max_elevation_ft = max((p.elevation_ft for p in points), default=0.0) if points else 0.0
 
         rows.append({
             "segment_id": user_segment.id,
@@ -98,6 +116,8 @@ def extract_all_segments(
             "activity_type": activity.activity_type,
             "party_size": activity.party_size,
             "experience_level": activity.experience_level,
+            "starting_elevation_ft": starting_elevation_cache[activity.activity_id],
+            "max_elevation_ft": max_elevation_ft,
         })
 
     df = pd.DataFrame(rows)
@@ -162,9 +182,13 @@ def extract_all_segments(
     return df
 
 
-def extract_locomotion_dataframe(db: Session, n_recent_activities: Optional[int] = None) -> pd.DataFrame:
+def extract_locomotion_dataframe(
+    db: Session,
+    n_recent_activities: Optional[int] = None,
+    activity_ids: Optional[List[str]] = None
+) -> pd.DataFrame:
     """Rows for the locomotion hierarchical model (climb/descent/flat segments only)."""
-    df = extract_all_segments(db, n_recent_activities, exclude_planned=True)
+    df = extract_all_segments(db, n_recent_activities=n_recent_activities, activity_ids=activity_ids, exclude_planned=True)
     if df.empty:
         return df
 
@@ -178,9 +202,13 @@ def extract_locomotion_dataframe(db: Session, n_recent_activities: Optional[int]
     return loco.reset_index(drop=True)
 
 
-def extract_rest_dataframe(db: Session, n_recent_activities: Optional[int] = None) -> pd.DataFrame:
+def extract_rest_dataframe(
+    db: Session,
+    n_recent_activities: Optional[int] = None,
+    activity_ids: Optional[List[str]] = None
+) -> pd.DataFrame:
     """One row per activity: total rest time vs. total distance/elevation gain."""
-    df = extract_all_segments(db, n_recent_activities, exclude_planned=True)
+    df = extract_all_segments(db, n_recent_activities=n_recent_activities, activity_ids=activity_ids, exclude_planned=True)
     if df.empty:
         return df
 
@@ -194,6 +222,7 @@ def extract_rest_dataframe(db: Session, n_recent_activities: Optional[int] = Non
             party_size=("party_size", "first"),
             is_hiking=("is_hiking", "first"),
             is_running=("is_running", "first"),
+            max_elevation_ft=("max_elevation_ft", "first"),
         )
         .reset_index()
     )
