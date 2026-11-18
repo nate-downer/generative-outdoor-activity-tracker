@@ -341,6 +341,7 @@ def predict_route(
             "elevation_change_tech_climb": float(row["elevation_change_tech_climb"]),
             "elevation_change_tech_descent": float(row["elevation_change_tech_descent"]),
             "pitch_count_tech_climb": float(row["pitch_count_tech_climb"]),
+            "starting_elevation_ft": float(row["starting_elevation_ft"]),
         }
 
         draws_sec = predict_segment_duration_draws(loco_trace, loco_meta, raw_covariates, n_draws=n_draws, rng=rng)
