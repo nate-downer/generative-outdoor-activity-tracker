@@ -262,7 +262,7 @@ def run_fit(
             loco_fit["df"] = pd.concat([loco_train, loco_df[loco_df["activity_id"].isin(validation_ids_set)]], ignore_index=True)
 
             # Recompute index arrays for the combined training+validation DataFrame
-            from .locomotion_model import SEGMENT_TYPES, EFFORT_SEGMENT_TYPES
+            # (SEGMENT_TYPES and EFFORT_SEGMENT_TYPES are already imported at module level)
             type_to_idx = {t: i for i, t in enumerate(SEGMENT_TYPES)}
             loco_fit["type_idx"] = loco_fit["df"]["segment_type_5"].map(type_to_idx).to_numpy()
             loco_fit["is_effort_eligible"] = loco_fit["df"]["segment_type_5"].isin(EFFORT_SEGMENT_TYPES).to_numpy().astype(float)
