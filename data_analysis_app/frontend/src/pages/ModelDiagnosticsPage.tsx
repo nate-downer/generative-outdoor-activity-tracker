@@ -480,7 +480,7 @@ function ModelDiagnosticsPage() {
           {diagnostics && (
             <div className="space-y-6">
               {MODEL_GROUP_ORDER.map((key) => {
-                const group = diagnostics[key];
+                const group = diagnostics[key] as ModelDiagnostics | undefined;
                 if (!group) return null;
                 return (
                   <div key={key}>
