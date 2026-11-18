@@ -10,7 +10,7 @@ import ModelRunsTable from '../components/analysis/ModelRunsTable';
 import ParameterTable from '../components/analysis/ParameterTable';
 import { useModelFitting } from '../hooks/useModelFitting';
 import { useActivities } from '../hooks/useActivities';
-import { MODEL_GROUP_ORDER } from '../types';
+import { MODEL_GROUP_ORDER, ModelDiagnostics } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { showViewerModeToast } from '../utils/viewerMode';
 import { formatDate, formatDistance, formatActivityType } from '../utils/formatters';
