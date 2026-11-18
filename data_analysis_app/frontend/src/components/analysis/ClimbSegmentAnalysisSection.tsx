@@ -4,6 +4,7 @@
 import { useMemo } from 'react';
 import SegmentScatterPlot from '../charts/analysis/SegmentScatterPlot';
 import HorizontalBarChart from '../charts/analysis/HorizontalBarChart';
+import BoxPlotWithJitter from '../charts/analysis/BoxPlotWithJitter';
 import { UserSegmentWithActivity } from '../../types';
 import { formatDistance, formatElevation, formatSpeed, formatGrade } from '../../utils/formatters';
 
@@ -60,9 +61,29 @@ function ClimbSegmentAnalysisSection({ segments }: ClimbSegmentAnalysisSectionPr
     );
   }
 
+  // Prepare box plot data for technical climbs by difficulty
+  // Define difficulty order for proper sorting
+  const difficultyOrder = ['3rd Class', '4th Class', '5th Easy', '5th Moderate', '5th Hard'];
+
+  const technicalClimbsForBoxPlot = useMemo(() => {
+    const data = segments
+      .filter(s => s.is_technical && s.difficulty && s.climb_rate_ft_per_hr)
+      .map(s => ({
+        category: s.difficulty!,
+        value: s.climb_rate_ft_per_hr!,
+      }));
+
+    // Sort by difficulty order
+    return data.sort((a, b) => {
+      const aIndex = difficultyOrder.indexOf(a.category);
+      const bIndex = difficultyOrder.indexOf(b.category);
+      return aIndex - bIndex;
+    });
+  }, [segments]);
+
   return (
     <div>
-      {/* Two-column grid - 8 plots */}
+      {/* Two-column grid - 10 plots */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. Scatter: duration vs distance */}
         <div className="bg-white rounded-lg shadow-md p-6">
@@ -171,6 +192,40 @@ function ClimbSegmentAnalysisSection({ segments }: ClimbSegmentAnalysisSectionPr
             xLabel="Distance (mi)"
             yLabel="Climb Rate (ft/hr)"
             xFormatter={formatDistance}
+            yFormatter={formatClimbRate}
+            showTrendline={false}
+          />
+        </div>
+
+        {/* 9. Box plot: climb rate by technical grade */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">Climb Rate by Technical Grade</h3>
+          {technicalClimbsForBoxPlot.length > 0 ? (
+            <BoxPlotWithJitter
+              data={technicalClimbsForBoxPlot}
+              categoryKey="category"
+              valueKey="value"
+              xLabel="Difficulty"
+              yLabel="Climb Rate (ft/hr)"
+              valueFormatter={formatClimbRate}
+            />
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              No technical climbing segments with difficulty ratings and climb rate data found.
+            </div>
+          )}
+        </div>
+
+        {/* 10. Scatter: starting elevation vs climb rate */}
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h3 className="text-lg font-semibold mb-4 text-gray-800">Starting Elevation vs Climb Rate</h3>
+          <SegmentScatterPlot
+            segments={segments}
+            xKey="starting_elevation_ft"
+            yKey="climb_rate_ft_per_hr"
+            xLabel="Starting Elevation (ft)"
+            yLabel="Climb Rate (ft/hr)"
+            xFormatter={formatElevation}
             yFormatter={formatClimbRate}
             showTrendline={false}
           />

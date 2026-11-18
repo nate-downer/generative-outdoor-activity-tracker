@@ -147,52 +147,8 @@ function AnalysisPage() {
           )}
         </div>
 
-        {/* Climb Segment Analysis Section - 7 plots */}
-        <div className="border border-gray-200 rounded-lg bg-white shadow-sm">
-          <button
-            onClick={() => setClimbSectionOpen(!climbSectionOpen)}
-            className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors"
-          >
-            <div className="flex-1">
-              <h2 className="text-lg font-semibold text-gray-900">
-                Climb Segment Analysis
-              </h2>
-              <p className="text-sm text-gray-500 mt-0.5">
-                Detailed metrics for climbing segments: difficulty, pace, energy expenditure
-              </p>
-            </div>
-            <div className="ml-4 flex-shrink-0">
-              <svg
-                className={`w-5 h-5 text-gray-500 transition-transform ${climbSectionOpen ? 'rotate-180' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </div>
-          </button>
-
-          {climbSectionOpen && (
-            <div className="border-t border-gray-200 p-6 bg-gray-50">
-              {segmentsError ? (
-                <div className="text-center py-8">
-                  <p className="text-red-600 font-medium">Error loading climb segments</p>
-                  <p className="text-gray-600 text-sm mt-1">{segmentsError}</p>
-                </div>
-              ) : segmentsLoading ? (
-                <div className="flex justify-center items-center py-16">
-                  <div className="text-gray-600">Loading climb segment data...</div>
-                </div>
-              ) : (
-                <ClimbSegmentAnalysisSection segments={climbSegments} />
-              )}
-            </div>
-          )}
-        </div>
-
         {/* General Pace Analysis Section - 2 scatter plots */}
-        <div className="border border-gray-200 rounded-lg bg-white shadow-sm mt-6">
+        <div className="border border-gray-200 rounded-lg bg-white shadow-sm">
           <button
             onClick={() => setPaceSectionOpen(!paceSectionOpen)}
             className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors"
@@ -230,6 +186,50 @@ function AnalysisPage() {
                 </div>
               ) : (
                 <GeneralPaceAnalysisSection segments={paceSegments} />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Climb Segment Analysis Section - 10 plots */}
+        <div className="border border-gray-200 rounded-lg bg-white shadow-sm mt-6">
+          <button
+            onClick={() => setClimbSectionOpen(!climbSectionOpen)}
+            className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors"
+          >
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Climb Segment Analysis
+              </h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Detailed metrics for climbing segments: difficulty, pace, energy expenditure
+              </p>
+            </div>
+            <div className="ml-4 flex-shrink-0">
+              <svg
+                className={`w-5 h-5 text-gray-500 transition-transform ${climbSectionOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </button>
+
+          {climbSectionOpen && (
+            <div className="border-t border-gray-200 p-6 bg-gray-50">
+              {segmentsError ? (
+                <div className="text-center py-8">
+                  <p className="text-red-600 font-medium">Error loading climb segments</p>
+                  <p className="text-gray-600 text-sm mt-1">{segmentsError}</p>
+                </div>
+              ) : segmentsLoading ? (
+                <div className="flex justify-center items-center py-16">
+                  <div className="text-gray-600">Loading climb segment data...</div>
+                </div>
+              ) : (
+                <ClimbSegmentAnalysisSection segments={climbSegments} />
               )}
             </div>
           )}

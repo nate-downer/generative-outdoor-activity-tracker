@@ -72,6 +72,14 @@ class Activity(Base):
     segments = relationship("Segment", back_populates="activity", cascade="all, delete-orphan")
     user_segments = relationship("UserSegment", back_populates="activity", cascade="all, delete-orphan")
 
+    # Performance indices for frequently filtered/sorted columns
+    __table_args__ = (
+        Index('idx_activities_date', 'date'),
+        Index('idx_activities_is_public', 'is_public'),
+        Index('idx_activities_is_planned', 'is_planned'),
+        Index('idx_activities_owner_id', 'owner_id'),
+    )
+
 
 class Point(Base):
     """GPS point from GPX file."""
@@ -94,9 +102,11 @@ class Point(Base):
     # Relationships
     activity = relationship("Activity", back_populates="points")
 
-    # Define composite index
+    # Performance indices for frequently filtered columns
     __table_args__ = (
         Index('idx_points_activity_time', 'activity_id', 'time'),
+        Index('idx_points_is_removed', 'is_removed'),
+        Index('idx_points_is_inactive', 'is_inactive'),
     )
 
 

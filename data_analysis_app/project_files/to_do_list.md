@@ -413,6 +413,8 @@ Can you also use the new nicknames in the table that has all the models (in addi
 We need it to load faster, so I would like to implement the following changes:
 - Start by having the sections with diagnostics for the differnt segment types collapsed (i.e. one section for totals, one for climbs)
 - Implement a new table in the backend that stores the summarized data used to create the plots 
+- Add additional technical climbing plot showing average rate of ascent for each technical climbing grade (as a box plot in front of a jitter plot)
+- Add an additional scatter plot that shows the climb rate vs. starting elevation
 
 
 ### Updates to the model Formula

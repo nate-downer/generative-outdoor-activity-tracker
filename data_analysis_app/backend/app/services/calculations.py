@@ -303,6 +303,7 @@ def calculate_segment_metrics(
             climb_rate_ft_per_hr: Climb rate in ft/hr (elevation gain / duration)
             elevation_gain_ft: Total elevation gain in feet
             elevation_loss_ft: Total elevation loss in feet (positive number)
+            starting_elevation_ft: Starting elevation in feet
     """
     # Calculate duration
     duration_sec = (end_time - start_time).total_seconds()
@@ -318,7 +319,8 @@ def calculate_segment_metrics(
             'avg_grade_percent': None,
             'climb_rate_ft_per_hr': None,
             'elevation_gain_ft': None,
-            'elevation_loss_ft': None
+            'elevation_loss_ft': None,
+            'starting_elevation_ft': None
         }
 
     # Calculate total horizontal distance and elevation change
@@ -362,6 +364,9 @@ def calculate_segment_metrics(
     else:
         climb_rate_ft_per_hr = None
 
+    # Get starting elevation from first point
+    starting_elevation_ft = segment_points[0].elevation_ft if segment_points else None
+
     return {
         'duration_sec': duration_sec,
         'distance_mi': total_distance_mi if total_distance_mi > 0 else None,
@@ -369,7 +374,8 @@ def calculate_segment_metrics(
         'avg_grade_percent': avg_grade_percent,
         'climb_rate_ft_per_hr': climb_rate_ft_per_hr,
         'elevation_gain_ft': total_elevation_gain_ft if total_elevation_gain_ft > 0 else None,
-        'elevation_loss_ft': total_elevation_loss_ft if total_elevation_loss_ft > 0 else None
+        'elevation_loss_ft': total_elevation_loss_ft if total_elevation_loss_ft > 0 else None,
+        'starting_elevation_ft': starting_elevation_ft
     }
 
 

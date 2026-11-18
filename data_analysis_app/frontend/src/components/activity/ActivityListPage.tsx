@@ -3,7 +3,7 @@
  * (real activities) and "Plan Routes" (planned routes) pages - identical UI,
  * just filtered to a different subset of activities.
  */
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Header from '../layout/Header'
 import SummaryStats from '../layout/SummaryStats'
 import ActivityListItem from './ActivityListItem'
@@ -21,16 +21,18 @@ function ActivityListPage({ isPlanned, title, initialSelectedActivityId }: Activ
   const { stats, loading: statsLoading, refetch: refetchStats } = useSummaryStats()
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(initialSelectedActivityId ?? null)
 
-  const activities = allActivities
-    .filter((activity) => Boolean(activity.is_planned) === isPlanned)
-    .sort((a, b) => {
-      // Planned routes sort alphabetically by name; real activities keep the
-      // backend's date-descending order (stable sort preserves it below).
-      if (!isPlanned) return 0
-      const nameA = (a.activity_name || a.activity_id).toLowerCase()
-      const nameB = (b.activity_name || b.activity_id).toLowerCase()
-      return nameA.localeCompare(nameB)
-    })
+  const activities = useMemo(() => {
+    return allActivities
+      .filter((activity) => Boolean(activity.is_planned) === isPlanned)
+      .sort((a, b) => {
+        // Planned routes sort alphabetically by name; real activities keep the
+        // backend's date-descending order (stable sort preserves it below).
+        if (!isPlanned) return 0
+        const nameA = (a.activity_name || a.activity_id).toLowerCase()
+        const nameB = (b.activity_name || b.activity_id).toLowerCase()
+        return nameA.localeCompare(nameB)
+      })
+  }, [allActivities, isPlanned])
 
   const handleActivityChange = async () => {
     // Save current scroll position

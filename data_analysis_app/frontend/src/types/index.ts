@@ -88,6 +88,7 @@ export interface UserSegmentWithActivity extends UserSegment {
   climb_rate_ft_per_hr: number | null;
   elevation_gain_ft: number | null;
   elevation_loss_ft: number | null;
+  starting_elevation_ft: number | null;
 }
 
 export interface SummaryStats {
