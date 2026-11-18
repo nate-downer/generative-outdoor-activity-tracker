@@ -185,6 +185,7 @@ class UserSegmentWithActivity(UserSegment):
     avg_grade_percent: Optional[float] = None
     climb_rate_ft_per_hr: Optional[float] = None
     elevation_gain_ft: Optional[float] = None
+    elevation_loss_ft: Optional[float] = None
 
 
 class SplitSegmentRequest(BaseModel):

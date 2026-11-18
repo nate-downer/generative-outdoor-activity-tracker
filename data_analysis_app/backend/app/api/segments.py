@@ -139,7 +139,8 @@ def get_all_user_segments(
             'avg_speed_mph': metrics['avg_speed_mph'],
             'avg_grade_percent': metrics['avg_grade_percent'],
             'climb_rate_ft_per_hr': metrics['climb_rate_ft_per_hr'],
-            'elevation_gain_ft': metrics['elevation_gain_ft']
+            'elevation_gain_ft': metrics['elevation_gain_ft'],
+            'elevation_loss_ft': metrics['elevation_loss_ft']
         }
 
         enriched_segments.append(schemas.UserSegmentWithActivity(**segment_dict))

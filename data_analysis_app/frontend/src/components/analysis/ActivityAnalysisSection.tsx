@@ -46,10 +46,6 @@ function ActivityAnalysisSection({ activities }: ActivityAnalysisSectionProps) {
 
   return (
     <div>
-      <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Activity Analysis</h2>
-      </div>
-
       {/* Two-column grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. Elevation traces - full width */}

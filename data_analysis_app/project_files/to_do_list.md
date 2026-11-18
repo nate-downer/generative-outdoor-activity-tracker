@@ -412,7 +412,27 @@ Can you also use the new nicknames in the table that has all the models (in addi
 
 We need it to load faster, so I would like to implement the following changes:
 - Start by having the sections with diagnostics for the differnt segment types collapsed (i.e. one section for totals, one for climbs)
-- Implement a new table in the backend that stores the summarized data used to create the plots s
+- Implement a new table in the backend that stores the summarized data used to create the plots 
+
+
+### Updates to the model Formula
+
+We need to re-work the fundemental model formula to switch to somethign that better encodes distance, elevation, and slope related data in a way the model can use.
+- Use a variant of Tobler's function to asses the relationship between slope vs. time
+- Replace the effort varriable with pure distance (since elevation change is implicitly encoded in the slope data)
+- Apply this rather than the effort value for all non-technical models
+
+So the new formula will be:
+
+time = distance * f(slope) * (everything else)
+
+
+### Implementing Lorentz shaped curve for the retalionship between time and speed
+
+This is based on research from Campbell et.al which found that a Lorentz curve gave the strongest relationship between slope and travel rate.
+
+The original reaserch explores the relationship in terms of speed (in m/s) as a function of slope (in degrees). Since the formula in the model is multiplying this value by distance, I think we are good to go after we handle unit conversion (distance * speed = time).
+
 
 
 ## Milestone 1.2 - Multiple client level users

@@ -52,25 +52,16 @@ function ClimbSegmentAnalysisSection({ segments }: ClimbSegmentAnalysisSectionPr
 
   if (segments.length === 0) {
     return (
-      <div>
-        <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Climb Segment Analysis</h2>
-        </div>
-        <div className="bg-white rounded-lg shadow-md p-8 text-center">
-          <p className="text-gray-500">
-            No climb segments found. Create climb segments on your activities to see analysis.
-          </p>
-        </div>
+      <div className="bg-white rounded-lg shadow-md p-8 text-center">
+        <p className="text-gray-500">
+          No climb segments found. Create climb segments on your activities to see analysis.
+        </p>
       </div>
     );
   }
 
   return (
     <div>
-      <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Climb Segment Analysis</h2>
-      </div>
-
       {/* Two-column grid - 8 plots */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. Scatter: duration vs distance */}

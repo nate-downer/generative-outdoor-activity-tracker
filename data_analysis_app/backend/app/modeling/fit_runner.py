@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 
 from .data import extract_locomotion_dataframe, extract_rest_dataframe
-from .effort import calibrate_effort_curve, compute_effort
 from .locomotion_model import SEGMENT_TYPES, EFFORT_SEGMENT_TYPES, build_and_fit_pooled_model
 from .rest_model import build_and_fit_rest_model
 from .diagnostics import pooled_diagnostics, rest_diagnostics
@@ -29,13 +28,21 @@ TRACE_DIR.mkdir(exist_ok=True, parents=True)
 RUNS_DIR = TRACE_DIR / "runs"
 RUNS_DIR.mkdir(exist_ok=True)
 
+# Empirically-fitted Lorentz curve parameters for slope-speed relationship
+# Fitted from GPS segment speed data using fit_lorentz_params.py
+# See: Campbell et al. research on hiking speed vs. slope
+LORENTZ_PARAMS = {
+    "A": 1.0479,      # Peak speed at optimal slope (m/s)
+    "slope0": -1.308,  # Optimal slope angle (degrees) - slight downhill
+    "gamma": 11.806    # Sensitivity parameter (degrees) - curve width
+}
+
 RUNS_INDEX_PATH = TRACE_DIR / "runs_index.json"
 
 MODEL_GROUPS = SEGMENT_TYPES + ["rest"]
 
 FIT_STEPS = [
     "Extracting segment data",
-    "Calibrating effort curve",
     "Fitting pooled locomotion model",
     "Fitting rest-time model",
     "Computing diagnostics",
@@ -212,7 +219,12 @@ def run_fit(
             validation_set = set(validation_activity_ids) if validation_activity_ids else set()
             all_activity_ids = list(training_set | validation_set)
 
-        loco_df = extract_locomotion_dataframe(db, n_recent_activities=n_recent_activities, activity_ids=all_activity_ids)
+        loco_df = extract_locomotion_dataframe(
+            db,
+            n_recent_activities=n_recent_activities,
+            activity_ids=all_activity_ids,
+            lorentz_params=LORENTZ_PARAMS
+        )
         rest_df = extract_rest_dataframe(db, n_recent_activities=n_recent_activities, activity_ids=all_activity_ids)
 
         if loco_df.empty or rest_df.empty:
@@ -220,47 +232,61 @@ def run_fit(
 
         activity_ids = set(loco_df["activity_id"]) | set(rest_df["activity_id"])
 
-        _set_step(1)
-        # Calibrate the effort curve on only the 3 non-vertical types - including
-        # technical_climb/technical_descent here would let their distance-irrelevant
-        # dynamics skew the curve shape for the types that are genuinely
-        # distance-driven (see locomotion_model.py's EFFORT_SEGMENT_TYPES docstring).
-        effort_calibration_df = loco_df[loco_df["segment_type_5"].isin(EFFORT_SEGMENT_TYPES)]
-        effort_params = calibrate_effort_curve(effort_calibration_df)
-        loco_df = loco_df.copy()
-        loco_df["effort"] = compute_effort(
-            loco_df["distance_mi"], loco_df["elevation_gain_ft"],
-            effort_params["p_distance"], effort_params["p_elevation"],
-        )
-        loco_df["log_effort"] = np.log(loco_df["effort"] + 1e-6)
+        # Slope-based features (log_distance, slope_squared) are now computed in
+        # extract_locomotion_dataframe() - no calibration step needed
 
-        _set_step(2)
+        _set_step(1)
         # Filter to training data only for model fitting
         # Validation data will be appended for diagnostics
         validation_ids_set = set(validation_activity_ids) if validation_activity_ids else set()
 
         if validation_ids_set:
             # Fit on training data only (true out-of-sample)
-            loco_train = loco_df[~loco_df["activity_id"].isin(validation_ids_set)].copy()
+            loco_train = loco_df[~loco_df["activity_id"].isin(validation_ids_set)].copy().reset_index(drop=True)
         else:
             loco_train = loco_df.copy()
 
         # Use 4 chains for better convergence diagnostics (rhat)
         # Memory usage is fine (~80%), so we can use the full configuration
-        loco_fit = build_and_fit_pooled_model(loco_train, draws=1000, tune=1000, chains=4)
+        loco_fit = build_and_fit_pooled_model(
+            loco_train,
+            draws=1000,
+            tune=1000,
+            chains=4,
+            lorentz_params=LORENTZ_PARAMS
+        )
 
         # For diagnostics: append validation data to compute out-of-sample predictions
         # The standardization params from training will be used for validation too
         if validation_ids_set and not loco_df[loco_df["activity_id"].isin(validation_ids_set)].empty:
             loco_fit["df"] = pd.concat([loco_train, loco_df[loco_df["activity_id"].isin(validation_ids_set)]], ignore_index=True)
 
+            # Recompute index arrays for the combined training+validation DataFrame
+            from .locomotion_model import SEGMENT_TYPES, EFFORT_SEGMENT_TYPES
+            type_to_idx = {t: i for i, t in enumerate(SEGMENT_TYPES)}
+            loco_fit["type_idx"] = loco_fit["df"]["segment_type_5"].map(type_to_idx).to_numpy()
+            loco_fit["is_effort_eligible"] = loco_fit["df"]["segment_type_5"].isin(EFFORT_SEGMENT_TYPES).to_numpy().astype(float)
+
+            # Keep the original training activity_index_map - don't create new indices
+            # Validation activities should ideally be from the same activities seen in training
+            # If a validation activity wasn't in training, fill with 0 (uses population mean)
+            loco_fit["activity_idx"] = loco_fit["df"]["activity_id"].map(loco_fit["activity_index_map"]).fillna(0).astype(int).to_numpy()
+
+            # Recompute covariate_matrix using training standardization stats
+            # (apply training stats to validation data - no data leakage)
+            covariate_cols = []
+            for cov in loco_fit["used_covariates"]:
+                std_vals = loco_fit["covariate_stats"][cov].transform(loco_fit["df"][cov].to_numpy())
+                covariate_cols.append(std_vals)
+            loco_fit["covariate_matrix"] = np.column_stack(covariate_cols) if covariate_cols else np.zeros((len(loco_fit["df"]), 0))
+
         # Pass validation IDs to mark validation points
         diagnostics = pooled_diagnostics(loco_fit, validation_ids_set)
 
-        _set_step(3)
+        _set_step(2)
         # Fit rest model on training data only
         if validation_ids_set:
-            rest_train = rest_df[~rest_df["activity_id"].isin(validation_ids_set)].copy()
+            rest_train = rest_df[~rest_df["activity_id"].isin(validation_ids_set)].copy().reset_index(drop=True)
         else:
             rest_train = rest_df.copy()
 
@@ -270,7 +296,14 @@ def run_fit(
         if validation_ids_set and not rest_df[rest_df["activity_id"].isin(validation_ids_set)].empty:
             rest_fit["df"] = pd.concat([rest_train, rest_df[rest_df["activity_id"].isin(validation_ids_set)]], ignore_index=True)
 
-        _set_step(4)
+            # Recompute covariate_matrix using training standardization stats
+            covariate_cols = []
+            for cov in rest_fit["used_covariates"]:
+                std_vals = rest_fit["covariate_stats"][cov].transform(rest_fit["df"][cov].to_numpy())
+                covariate_cols.append(std_vals)
+            rest_fit["covariate_matrix"] = np.column_stack(covariate_cols) if covariate_cols else np.zeros((len(rest_fit["df"]), 0))
+
+        _set_step(3)
         diagnostics.update(rest_diagnostics(rest_fit, validation_ids_set))
 
         # Extract parameter summaries and convergence diagnostics
@@ -281,7 +314,7 @@ def run_fit(
         diagnostics["_locomotion_parameters"] = loco_params
         diagnostics["_rest_parameters"] = rest_params
 
-        _set_step(5)
+        _set_step(4)
         run_dir = _run_dir(run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         az.to_netcdf(loco_fit["idata"], str(run_dir / "locomotion_trace.nc"))
@@ -294,11 +327,12 @@ def run_fit(
         metadata = {
             "locomotion": {
                 "segment_types": SEGMENT_TYPES,
-                "effort_segment_types": EFFORT_SEGMENT_TYPES,
+                "distance_slope_segment_types": EFFORT_SEGMENT_TYPES,  # Keep same 3 types, renamed
                 "used_covariates": loco_fit["used_covariates"],
-                "log_effort_stats": vars(loco_fit["log_effort_stats"]),
+                "log_distance_stats": vars(loco_fit["log_distance_stats"]),
+                "lorentz_stats": vars(loco_fit["lorentz_stats"]),
+                "lorentz_params": loco_fit["lorentz_params"],
                 "covariate_stats": {cov: vars(stats) for cov, stats in loco_fit["covariate_stats"].items()},
-                "effort_params": effort_params,
             },
             "rest": {
                 "used_covariates": rest_fit["used_covariates"],

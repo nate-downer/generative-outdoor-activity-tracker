@@ -13,7 +13,8 @@ import xarray as xr
 from .locomotion_model import SEGMENT_TYPES, EFFORT_SEGMENT_TYPES, _tod_harmonics
 
 VARIABLE_LABELS = {
-    "effort_factor": "Effort factor (distance + elevation)",
+    "distance_factor": "Distance (horizontal travel)",
+    "lorentz_factor": "Slope effect (Lorentz curve)",
     "load_ratio": "Load ratio (pack/body weight)",
     "terrain_factor_nontechnical": "Terrain factor",
     "cum_distance_prior_mi": "Cumulative distance so far",
@@ -143,7 +144,6 @@ def pooled_diagnostics(fit_result: dict, validation_ids: set = None) -> dict:
 
     posterior = idata.posterior
     alpha_type_all = _flatten(posterior["alpha_type"])  # (S, n_types)
-    beta_type_all = _flatten(posterior["beta_type"])  # (S, n_types)
     gamma = _flatten(posterior["gamma"])  # (S, n_cov)
     tod_a1 = _flatten(posterior["tod_a1"])  # (S,)
     tod_b1 = _flatten(posterior["tod_b1"])
@@ -155,7 +155,8 @@ def pooled_diagnostics(fit_result: dict, validation_ids: set = None) -> dict:
     # slope for a composite sinusoid, so this stands in as its "coefficient".
     tod_amplitude = np.sqrt(tod_a1 ** 2 + tod_b1 ** 2 + tod_a2 ** 2 + tod_b2 ** 2)  # (S,)
 
-    log_effort_std = fit_result["log_effort_stats"].transform(df["log_effort"].to_numpy())
+    log_distance_std = fit_result["log_distance_stats"].transform(df["log_distance"].to_numpy())
+    lorentz_std = fit_result["lorentz_stats"].transform(df["lorentz_log_term"].to_numpy())
     sin1, cos1, sin2, cos2 = _tod_harmonics(df["hour_of_day"].to_numpy())
 
     segment_ids = df["segment_id"].to_numpy()
@@ -190,16 +191,23 @@ def pooled_diagnostics(fit_result: dict, validation_ids: set = None) -> dict:
             "activity_offset": sigma_activity,
         }
 
-        # technical_climb/technical_descent have no effort term at all - their
+        # technical_climb/technical_descent have no distance/slope terms - their
         # duration comes entirely from the elevation_change_tech_*/
         # pitch_count_tech_climb covariates in the generic loop below.
         if type_name in EFFORT_SEGMENT_TYPES:
-            beta_t = beta_type_all[:, EFFORT_SEGMENT_TYPES.index(type_name)]  # (S,)
-            effort_term = beta_t[:, None] * log_effort_std[None, mask]  # (S, n_t)
-            term_vars["effort_factor"] = effort_term.var(axis=1)
-            term_coefs["effort_factor"] = beta_t
+            beta_distance = _flatten(posterior["beta_distance"])  # (S,) scalar samples
+            beta_lorentz = _flatten(posterior["beta_lorentz"])  # (S,) scalar samples
+
+            distance_term = beta_distance[:, None] * log_distance_std[None, mask]  # (S, n_t)
+            lorentz_term = beta_lorentz[:, None] * lorentz_std[None, mask]  # (S, n_t)
+
+            term_vars["distance_factor"] = distance_term.var(axis=1)
+            term_vars["lorentz_factor"] = lorentz_term.var(axis=1)
+            term_coefs["distance_factor"] = beta_distance
+            term_coefs["lorentz_factor"] = beta_lorentz
         else:
-            effort_term = 0.0
+            distance_term = 0.0
+            lorentz_term = 0.0
 
         for j in range(n_cov):
             # Covariate is a global, shared column, but many entries (climb
@@ -213,7 +221,7 @@ def pooled_diagnostics(fit_result: dict, validation_ids: set = None) -> dict:
             term_vars[used_covariates[j]] = cov_terms[:, :, j].var(axis=1)
             term_coefs[used_covariates[j]] = gamma[:, j]
 
-        mu = alpha_t[:, None] + effort_term + cov_terms.sum(axis=2) + tod_term + activity_term
+        mu = alpha_t[:, None] + distance_term + lorentz_term + cov_terms.sum(axis=2) + tod_term + activity_term
         predicted_min = np.exp(np.median(mu, axis=0)) / 60.0
         actual_min = duration_sec[mask] / 60.0
 

@@ -1,6 +1,7 @@
 """Data extraction for the hierarchical time-prediction models."""
 from typing import Dict, List, Optional
 
+import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
@@ -185,9 +186,18 @@ def extract_all_segments(
 def extract_locomotion_dataframe(
     db: Session,
     n_recent_activities: Optional[int] = None,
-    activity_ids: Optional[List[str]] = None
+    activity_ids: Optional[List[str]] = None,
+    lorentz_params: Optional[dict] = None
 ) -> pd.DataFrame:
-    """Rows for the locomotion hierarchical model (climb/descent/flat segments only)."""
+    """Rows for the locomotion hierarchical model (climb/descent/flat segments only).
+
+    Args:
+        db: Database session
+        n_recent_activities: Optional limit to N most recent activities
+        activity_ids: Optional specific activity IDs to include
+        lorentz_params: Lorentz curve parameters {'A', 'slope0', 'gamma'} for slope effect.
+                       If None, uses default values.
+    """
     df = extract_all_segments(db, n_recent_activities=n_recent_activities, activity_ids=activity_ids, exclude_planned=True)
     if df.empty:
         return df
@@ -199,6 +209,30 @@ def extract_locomotion_dataframe(
     ]
     loco = loco.dropna(subset=required)
     loco = loco[loco["duration_sec"] > 0]
+
+    # Add log(distance) for distance × slope model structure
+    loco["log_distance"] = np.log(loco["distance_mi"] + 1e-6)
+
+    # Compute Lorentz curve term for slope-speed relationship
+    # Uses empirically-fitted parameters (A, slope0, gamma) from GPS speed data
+    from .slope import lorentz_curve_term
+
+    # Use provided params or defaults from empirical fit
+    if lorentz_params is None:
+        lorentz_params = {
+            "A": 1.0479,
+            "slope0": -1.308,
+            "gamma": 11.806
+        }
+
+    loco["lorentz_log_term"] = lorentz_curve_term(
+        loco["elevation_gain_ft"].to_numpy(),
+        loco["distance_mi"].to_numpy(),
+        A=lorentz_params["A"],
+        slope0=lorentz_params["slope0"],
+        gamma=lorentz_params["gamma"]
+    )
+
     return loco.reset_index(drop=True)
 
 

@@ -47,14 +47,14 @@ function ModelRunsTable({ runs, selectedRunId, onSelectRun, onArchive, onUnarchi
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-gray-200 text-left text-gray-500">
-            <th className="px-4 py-3 font-medium">Run</th>
-            <th className="px-4 py-3 font-medium text-right">Activities</th>
+            <th className="px-2 py-3 font-medium">Run</th>
+            <th className="px-2 py-3 font-medium text-right">Activities</th>
             {MODEL_GROUP_ORDER.map((group) => (
-              <th key={group} className="px-4 py-3 font-medium text-right whitespace-nowrap">
+              <th key={group} className="px-2 py-3 font-medium text-right whitespace-nowrap">
                 {GROUP_LABELS[group]} RMSE%
               </th>
             ))}
-            <th className="px-4 py-3 font-medium text-right">Actions</th>
+            <th className="px-2 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -69,20 +69,20 @@ function ModelRunsTable({ runs, selectedRunId, onSelectRun, onArchive, onUnarchi
                   isSelected ? 'bg-orange-50' : isArchived ? 'bg-gray-100 opacity-60' : 'hover:bg-gray-50'
                 }`}
               >
-                <td className={`px-4 py-3 whitespace-nowrap ${isArchived ? 'text-gray-500' : 'text-gray-800'}`}>
+                <td className={`px-2 py-3 whitespace-nowrap ${isArchived ? 'text-gray-500' : 'text-gray-800'}`}>
                   {formatRunLabel(run)}
                   {isArchived && <span className="ml-2 text-xs text-gray-500 font-medium">(archived)</span>}
                   {isSelected && <span className="ml-2 text-xs text-orange-600 font-medium">(viewing)</span>}
                 </td>
-                <td className={`px-4 py-3 text-right ${isArchived ? 'text-gray-500' : 'text-gray-700'}`}>
+                <td className={`px-2 py-3 text-right ${isArchived ? 'text-gray-500' : 'text-gray-700'}`}>
                   {run.n_activities_total}
                 </td>
                 {MODEL_GROUP_ORDER.map((group) => (
-                  <td key={group} className={`px-4 py-3 text-right ${isArchived ? 'text-gray-500' : 'text-gray-700'}`}>
+                  <td key={group} className={`px-2 py-3 text-right ${isArchived ? 'text-gray-500' : 'text-gray-700'}`}>
                     {formatRmse(run.rmse_pct[group])}
                   </td>
                 ))}
-                <td className="px-4 py-3 text-right">
+                <td className="px-2 py-3 text-right">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

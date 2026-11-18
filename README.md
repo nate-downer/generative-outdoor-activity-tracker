@@ -189,6 +189,12 @@ This project is licensed under the PolyForm Noncommercial License 1.0.0 - see th
 - GPX parsing powered by gpxpy
 - Bayesian modeling using PyMC and numpyro
 
+### Research Citations
+
+The slope-to-speed relationship model in this application is based on research demonstrating that a Lorentzian (Cauchy) curve provides the strongest fit for the relationship between terrain slope and hiking speed:
+
+- **Campbell, M. J., et al.** - Research on the relationship between slope (in degrees) and travel rate (in meters/second), showing that a Lorentz curve characterizes the speed-slope relationship across various terrain types.
+
 ---
 
 **Note:** This is a personal project for outdoor activity analysis. GPS data shown in public viewer mode represents real personal activity data. If deploying your own instance, review privacy settings and ensure appropriate data handling for your use case.
