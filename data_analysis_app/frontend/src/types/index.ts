@@ -300,7 +300,7 @@ export interface ParameterDiagnostics {
 }
 
 export interface AllModelDiagnostics {
-  [key: string]: ModelDiagnostics | ParameterDiagnostics;
+  [key: string]: ModelDiagnostics | ParameterDiagnostics | undefined;
   _locomotion_parameters?: ParameterDiagnostics;
   _rest_parameters?: ParameterDiagnostics;
 }
