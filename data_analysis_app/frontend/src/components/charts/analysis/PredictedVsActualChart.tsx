@@ -119,7 +119,7 @@ function PredictedVsActualChart({ data, color = '#ea580c' }: PredictedVsActualCh
           isAnimationActive={false}
           legendType="none"
         />
-        <Scatter data={points} shape={(props) => renderDot(props, color)} />
+        <Scatter data={points} shape={(props: any) => renderDot(props, color)} />
       </ComposedChart>
     </ResponsiveContainer>
   );

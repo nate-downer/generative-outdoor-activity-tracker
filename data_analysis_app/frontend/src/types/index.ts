@@ -299,7 +299,8 @@ export interface ParameterDiagnostics {
   };
 }
 
-export interface AllModelDiagnostics extends Record<string, ModelDiagnostics> {
+export interface AllModelDiagnostics {
+  [key: string]: ModelDiagnostics | ParameterDiagnostics;
   _locomotion_parameters?: ParameterDiagnostics;
   _rest_parameters?: ParameterDiagnostics;
 }
