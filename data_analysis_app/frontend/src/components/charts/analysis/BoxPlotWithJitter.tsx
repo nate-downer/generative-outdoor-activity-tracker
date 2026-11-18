@@ -110,7 +110,24 @@ function BoxPlotWithJitter({
           domain={[-0.5, categoryStats.length - 0.5]}
           ticks={categoryStats.map((_, i) => i)}
           tickFormatter={(index) => categoryStats[Math.round(index)]?.category || ''}
-          tick={{ fontSize: 12, angle: -45, textAnchor: 'end' }}
+          tick={(props: any) => {
+            const { x, y, payload } = props;
+            return (
+              <g transform={`translate(${x},${y})`}>
+                <text
+                  x={0}
+                  y={0}
+                  dy={16}
+                  textAnchor="end"
+                  fill="#9ca3af"
+                  fontSize={12}
+                  transform="rotate(-45)"
+                >
+                  {categoryStats[Math.round(payload.value)]?.category || ''}
+                </text>
+              </g>
+            );
+          }}
           height={60}
           stroke="#9ca3af"
         />
