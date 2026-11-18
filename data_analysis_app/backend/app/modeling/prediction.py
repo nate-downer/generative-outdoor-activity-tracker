@@ -20,7 +20,6 @@ from astral.sun import sun
 from .. import models
 from ..services.timezone import convert_to_local_time
 from .data import extract_all_segments
-from .effort import compute_effort
 from .locomotion_model import _tod_harmonics
 from .fit_runner import load_run_metadata, run_dir as _fit_run_dir
 
@@ -61,22 +60,34 @@ def predict_segment_duration_draws(
     alpha_type = flat("alpha_type")[:, type_pos]
     sigma_duration = flat("sigma_duration")
 
-    # technical_climb/technical_descent have no effort term at all - their duration
+    # technical_climb/technical_descent have no distance/slope terms - their duration
     # comes entirely from the elevation_change_tech_*/pitch_count_tech_climb
-    # covariates in the generic covariate loop below. Effort is deterministic/known
-    # (same formula + calibrated exponents as fit time) for the 3 types that do use
-    # it, not a latent variable - no closed-form conditional needed here anymore.
-    if segment_type_5 in meta["effort_segment_types"]:
-        effort_type_pos = meta["effort_segment_types"].index(segment_type_5)
-        beta_type = flat("beta_type")[:, effort_type_pos]
-        effort = compute_effort(
-            raw_covariates["distance_mi"], raw_covariates["elevation_gain_ft"],
-            meta["effort_params"]["p_distance"], meta["effort_params"]["p_elevation"],
+    # covariates in the generic covariate loop below.
+    # For backward compatibility, check both old and new metadata keys
+    distance_slope_types = meta.get("distance_slope_segment_types", meta.get("effort_segment_types", []))
+    if segment_type_5 in distance_slope_types:
+        # Compute distance term
+        log_distance = float(np.log(raw_covariates["distance_mi"] + 1e-6))
+        log_distance_std = _standardize_value(log_distance, meta["log_distance_stats"])
+        beta_distance = flat("beta_distance")  # Scalar, not an array
+        distance_term = beta_distance * log_distance_std
+
+        # Compute Lorentz term
+        from .slope import lorentz_curve_term
+        lorentz_params = meta["lorentz_params"]
+        lorentz_log = lorentz_curve_term(
+            raw_covariates["elevation_gain_ft"],
+            raw_covariates["distance_mi"],
+            A=lorentz_params["A"],
+            slope0=lorentz_params["slope0"],
+            gamma=lorentz_params["gamma"]
         )
-        log_effort_std = _standardize_value(float(np.log(effort + 1e-6)), meta["log_effort_stats"])
-        effort_term = beta_type * log_effort_std
+        lorentz_std = _standardize_value(lorentz_log, meta["lorentz_stats"])
+        beta_lorentz = flat("beta_lorentz")  # Scalar
+        lorentz_term = beta_lorentz * lorentz_std
     else:
-        effort_term = 0.0
+        distance_term = 0.0
+        lorentz_term = 0.0
 
     covariate_term = np.zeros(n_draws)
     if meta["used_covariates"]:
@@ -98,7 +109,7 @@ def predict_segment_duration_draws(
     # mean of 0 - "no particular reason to expect this route to be unusual."
     activity_term = 0.0
 
-    mu = alpha_type + effort_term + covariate_term + tod_term + activity_term
+    mu = alpha_type + distance_term + lorentz_term + covariate_term + tod_term + activity_term
     log_duration = rng.normal(mu, sigma_duration)
     return np.exp(log_duration)
 

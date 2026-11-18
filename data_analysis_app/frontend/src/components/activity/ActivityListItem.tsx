@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Activity } from '../../types'
 import {
   formatDate,
@@ -6,7 +7,8 @@ import {
   formatElevation,
   formatActivityType,
 } from '../../utils/formatters'
-import ActivityEditor from './ActivityEditor'
+
+const ActivityEditor = lazy(() => import('./ActivityEditor'))
 
 interface ActivityListItemProps {
   activity: Activity
@@ -115,7 +117,9 @@ function ActivityListItem({ activity, isSelected, onClick, onActivityUpdated, on
             className="mt-6 pt-6 border-t border-gray-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <ActivityEditor activity={activity} onActivityUpdated={onActivityUpdated} onDeleted={onDeleted} />
+            <Suspense fallback={<div className="p-4 text-center text-gray-500">Loading...</div>}>
+              <ActivityEditor activity={activity} onActivityUpdated={onActivityUpdated} onDeleted={onDeleted} />
+            </Suspense>
           </div>
         )}
       </div>

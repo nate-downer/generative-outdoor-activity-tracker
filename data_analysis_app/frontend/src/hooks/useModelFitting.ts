@@ -9,6 +9,14 @@ import type { AllModelDiagnostics, FitStatus, ModelRunSummary } from '../types';
 
 const POLL_INTERVAL_MS = 1500;
 
+interface FitOptions {
+  model_nickname?: string;
+  prior_run_id?: string;
+  prior_strength?: number;
+  training_activity_ids: string[];
+  validation_activity_ids: string[];
+}
+
 interface UseModelFittingResult {
   fitStatus: FitStatus | null;
   runs: ModelRunSummary[];
@@ -18,7 +26,11 @@ interface UseModelFittingResult {
   diagnostics: AllModelDiagnostics | null;
   diagnosticsLoading: boolean;
   diagnosticsError: string | null;
-  startFit: (nRecentActivities?: number | null) => Promise<void>;
+  startFit: (options: FitOptions) => Promise<void>;
+  showArchived: boolean;
+  setShowArchived: (show: boolean) => void;
+  archiveRun: (runId: string) => Promise<void>;
+  unarchiveRun: (runId: string) => Promise<void>;
 }
 
 export function useModelFitting(): UseModelFittingResult {
@@ -29,6 +41,7 @@ export function useModelFitting(): UseModelFittingResult {
   const [diagnostics, setDiagnostics] = useState<AllModelDiagnostics | null>(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState<string | null>(null);
+  const [showArchived, setShowArchivedState] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchDiagnosticsForRun = useCallback(async (runId: string) => {
@@ -49,10 +62,10 @@ export function useModelFitting(): UseModelFittingResult {
     fetchDiagnosticsForRun(runId);
   }, [fetchDiagnosticsForRun]);
 
-  const fetchRuns = useCallback(async (): Promise<ModelRunSummary[]> => {
+  const fetchRuns = useCallback(async (includeArchived: boolean): Promise<ModelRunSummary[]> => {
     try {
       setRunsLoading(true);
-      const data = await modelsAPI.getRuns();
+      const data = await modelsAPI.getRuns(includeArchived);
       setRuns(data);
       return data;
     } catch (err) {
@@ -76,7 +89,7 @@ export function useModelFitting(): UseModelFittingResult {
 
     if (status.state === 'done') {
       stopPolling();
-      const freshRuns = await fetchRuns();
+      const freshRuns = await fetchRuns(showArchived);
       if (status.run_id) {
         selectRun(status.run_id);
       } else if (freshRuns.length > 0) {
@@ -85,22 +98,28 @@ export function useModelFitting(): UseModelFittingResult {
     } else if (status.state === 'error') {
       stopPolling();
     }
-  }, [fetchRuns, selectRun, stopPolling]);
+  }, [fetchRuns, selectRun, stopPolling, showArchived]);
 
-  const startFit = useCallback(async (nRecentActivities?: number | null) => {
-    await modelsAPI.fit(nRecentActivities);
+  const startFit = useCallback(async (options: FitOptions) => {
+    await modelsAPI.fit(options);
     await pollStatus();
     stopPolling();
     pollRef.current = setInterval(pollStatus, POLL_INTERVAL_MS);
   }, [pollStatus, stopPolling]);
 
+  // Refetch runs when showArchived changes
   useEffect(() => {
-    fetchRuns().then((initialRuns) => {
-      if (initialRuns.length > 0) {
-        selectRun(initialRuns[0].run_id);
+    fetchRuns(showArchived).then((freshRuns) => {
+      // Only auto-select if we don't have a selection or the current selection is not in the new list
+      if (!selectedRunId || !freshRuns.find(r => r.run_id === selectedRunId)) {
+        if (freshRuns.length > 0) {
+          selectRun(freshRuns[0].run_id);
+        }
       }
     });
+  }, [showArchived, fetchRuns, selectRun, selectedRunId]);
 
+  useEffect(() => {
     // Resume polling if a fit was already running (e.g. page was refreshed mid-fit).
     modelsAPI.getFitStatus().then((status) => {
       setFitStatus(status);
@@ -113,6 +132,20 @@ export function useModelFitting(): UseModelFittingResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const setShowArchived = useCallback((show: boolean) => {
+    setShowArchivedState(show);
+  }, []);
+
+  const archiveRun = useCallback(async (runId: string) => {
+    await modelsAPI.archiveRun(runId);
+    await fetchRuns(showArchived);
+  }, [fetchRuns, showArchived]);
+
+  const unarchiveRun = useCallback(async (runId: string) => {
+    await modelsAPI.unarchiveRun(runId);
+    await fetchRuns(showArchived);
+  }, [fetchRuns, showArchived]);
+
   return {
     fitStatus,
     runs,
@@ -123,5 +156,9 @@ export function useModelFitting(): UseModelFittingResult {
     diagnosticsLoading,
     diagnosticsError,
     startFit,
+    showArchived,
+    setShowArchived,
+    archiveRun,
+    unarchiveRun,
   };
 }

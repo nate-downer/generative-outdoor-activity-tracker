@@ -87,6 +87,8 @@ export interface UserSegmentWithActivity extends UserSegment {
   avg_grade_percent: number | null;
   climb_rate_ft_per_hr: number | null;
   elevation_gain_ft: number | null;
+  elevation_loss_ft: number | null;
+  starting_elevation_ft: number | null;
 }
 
 export interface SummaryStats {
@@ -164,10 +166,12 @@ export interface FitStatus {
 export interface ModelRunSummary {
   run_id: string;
   created_at: string;
+  model_nickname?: string;
   n_activities_total: number;
   n_recent_activities_filter: number | null;
   rmse_pct: Record<string, number>;
   is_predictable: boolean;
+  is_archived?: boolean;
 }
 
 // Time prediction (Milestone 0.8 - predicting planned routes)
@@ -243,6 +247,7 @@ export interface PredictedVsActualPoint {
   activity_name: string;
   predicted_min: number;
   actual_min: number;
+  is_validation?: boolean;
 }
 
 export interface ModelDiagnostics {
@@ -251,11 +256,53 @@ export interface ModelDiagnostics {
   r_squared: number;
   rmse_min: number;
   rmse_pct_of_mean: number;
+  validation_rmse_min?: number;
+  validation_rmse_pct_of_mean?: number;
+  n_validation_points?: number;
   variance_explained: VarianceExplainedEntry[];
   predicted_vs_actual: PredictedVsActualPoint[];
 }
 
-export type AllModelDiagnostics = Record<string, ModelDiagnostics>;
+export interface ParameterElement {
+  index: number;
+  mean: number;
+  sd: number;
+  hdi_5: number;
+  hdi_95: number;
+  ess_bulk: number;
+  ess_tail: number;
+  r_hat: number;
+}
+
+export interface ParameterSummary {
+  parameter: string;
+  description: string;
+  is_array: boolean;
+  // For scalar parameters
+  mean?: number;
+  sd?: number;
+  hdi_5?: number;
+  hdi_95?: number;
+  ess_bulk?: number;
+  ess_tail?: number;
+  r_hat?: number;
+  // For array parameters
+  elements?: ParameterElement[];
+}
+
+export interface ParameterDiagnostics {
+  parameters: ParameterSummary[];
+  convergence: {
+    n_divergences: number;
+    max_r_hat: number;
+    min_ess_bulk: number;
+  };
+}
+
+export interface AllModelDiagnostics extends Record<string, ModelDiagnostics> {
+  _locomotion_parameters?: ParameterDiagnostics;
+  _rest_parameters?: ParameterDiagnostics;
+}
 
 export const MODEL_GROUP_ORDER = [
   'technical_climb',

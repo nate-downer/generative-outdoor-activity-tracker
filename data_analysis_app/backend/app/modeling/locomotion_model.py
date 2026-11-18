@@ -34,6 +34,7 @@ all 5 types):
   unless diagnostics clearly call for more.
 """
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -63,6 +64,7 @@ SHARED_COVARIATES = [
     "terrain_factor_nontechnical",
     "cum_distance_prior_mi",
     "cum_elevation_prior_ft",
+    "starting_elevation_ft",
     "party_size",
     "is_hiking",
     "is_running",
@@ -106,12 +108,21 @@ def build_and_fit_pooled_model(
     tune: int = 1000,
     chains: int = 4,
     random_seed: int = 42,
+    lorentz_params: Optional[dict] = None,
 ) -> dict:
     """
     Build and sample the pooled locomotion model across all 5 segment types.
 
-    `df` must already have a `log_effort` column (see `effort.py`), computed once by
-    the caller using this run's own calibrated curve exponents.
+    `df` must already have a `lorentz_log_term` column, computed by the caller
+    using the empirically-fitted Lorentz curve parameters.
+
+    Args:
+        df: DataFrame with segment data including lorentz_log_term
+        draws: Number of MCMC samples to draw
+        tune: Number of tuning samples
+        chains: Number of MCMC chains
+        random_seed: Random seed for reproducibility
+        lorentz_params: Lorentz curve parameters {'A', 'slope0', 'gamma'}
     """
     df = df.reset_index(drop=True)
     n = len(df)
@@ -124,19 +135,17 @@ def build_and_fit_pooled_model(
     type_to_idx = {t: i for i, t in enumerate(SEGMENT_TYPES)}
     type_idx = df["segment_type_5"].map(type_to_idx).to_numpy()
 
-    # Effort/beta_type only applies to the 3 non-vertical types - technical_climb/
-    # technical_descent get a dummy fallback index (0) that's always masked out by
-    # is_effort_eligible below, so their rows never influence beta_type's hierarchy.
-    effort_type_to_idx = {t: i for i, t in enumerate(EFFORT_SEGMENT_TYPES)}
+    # Distance/slope only applies to the 3 non-vertical types - technical_climb/
+    # technical_descent use elevation_change_tech_*/pitch_count_tech_climb covariates instead.
     is_effort_eligible = df["segment_type_5"].isin(EFFORT_SEGMENT_TYPES).to_numpy().astype(float)
-    effort_type_idx = df["segment_type_5"].map(lambda t: effort_type_to_idx.get(t, 0)).to_numpy()
 
     activity_ids = sorted(df["activity_id"].unique())
     activity_index_map = {a: i for i, a in enumerate(activity_ids)}
     activity_idx = df["activity_id"].map(activity_index_map).to_numpy()
 
     log_duration = np.log(df["duration_sec"].to_numpy())
-    log_effort_std, log_effort_stats = _standardize(df["log_effort"])
+    log_distance_std, log_distance_stats = _standardize(df["log_distance"])
+    lorentz_std, lorentz_stats = _standardize(df["lorentz_log_term"])
 
     covariate_stats = {}
     covariate_cols = []
@@ -150,7 +159,6 @@ def build_and_fit_pooled_model(
 
     coords = {
         "segment_type": SEGMENT_TYPES,
-        "effort_segment_type": EFFORT_SEGMENT_TYPES,
         "covariate": used_covariates,
         "activity": [str(a) for a in activity_ids],
     }
@@ -162,15 +170,14 @@ def build_and_fit_pooled_model(
         alpha_raw = pm.Normal("alpha_raw", 0.0, 1.0, dims="segment_type")
         alpha_type = pm.Deterministic("alpha_type", mu_alpha + sigma_alpha * alpha_raw, dims="segment_type")
 
-        # --- Non-centered type hierarchy: effort elasticity (3 non-vertical types
-        # only - technical_climb/technical_descent use elevation_change_tech_*/
-        # pitch_count_tech_climb in the shared covariate bracket below instead). ---
-        # Centered near 1: effort is engineered so duration scales roughly
-        # proportionally to it by construction.
-        mu_beta = pm.Normal("mu_beta", 1.0, 0.5)
-        sigma_beta = pm.HalfNormal("sigma_beta", 0.4)
-        beta_raw = pm.Normal("beta_raw", 0.0, 1.0, dims="effort_segment_type")
-        beta_type = pm.Deterministic("beta_type", mu_beta + sigma_beta * beta_raw, dims="effort_segment_type")
+        # --- Shared distance and slope coefficients (all 3 non-vertical types) ---
+        # Centered at 1: duration scales roughly proportionally to distance
+        beta_distance = pm.Normal("beta_distance", 1.0, 0.3)
+
+        # Lorentz scale factor: how much deviations from optimal slope slow you down
+        # Centered at 0 (no effect), positive values expected (slowdown)
+        # The Lorentz curve shape (A, slope0, gamma) is fixed from empirical fitting
+        beta_lorentz = pm.Normal("beta_lorentz", 0.0, 0.5)
 
         # --- Shared covariate bracket (one equation across all 5 types) ---
         gamma = pm.Normal("gamma", 0.0, 0.5, dims="covariate")
@@ -193,11 +200,15 @@ def build_and_fit_pooled_model(
 
         sigma_duration = pm.HalfNormal("sigma_duration", 0.5)
 
-        # is_effort_eligible zeroes the effort term for technical_climb/
-        # technical_descent regardless of effort_type_idx's dummy fallback value.
+        # is_effort_eligible zeroes the distance and Lorentz terms for technical_climb/
+        # technical_descent (they use elevation_change_tech_*/pitch_count_tech_climb covariates instead).
+        distance_term = beta_distance * log_distance_std * is_effort_eligible
+        lorentz_term = beta_lorentz * lorentz_std * is_effort_eligible
+
         mu = (
             alpha_type[type_idx]
-            + beta_type[effort_type_idx] * log_effort_std * is_effort_eligible
+            + distance_term
+            + lorentz_term
             + covariate_term
             + tod_term
             + activity_offset[activity_idx]
@@ -225,15 +236,24 @@ def build_and_fit_pooled_model(
         # Combine chains into single InferenceData with proper chain dimension
         idata = az.concat(chain_idatas, dim="chain")
 
+    # Use provided params or defaults from empirical fit
+    if lorentz_params is None:
+        lorentz_params = {
+            "A": 1.0479,
+            "slope0": -1.308,
+            "gamma": 11.806
+        }
+
     return {
         "idata": idata,
         "df": df,
         "activity_index_map": activity_index_map,
         "type_idx": type_idx,
-        "effort_type_idx": effort_type_idx,
-        "is_effort_eligible": is_effort_eligible,
+        "is_effort_eligible": is_effort_eligible,  # Kept for backward compatibility in diagnostics
         "activity_idx": activity_idx,
-        "log_effort_stats": log_effort_stats,
+        "log_distance_stats": log_distance_stats,
+        "lorentz_stats": lorentz_stats,
+        "lorentz_params": lorentz_params,
         "covariate_stats": covariate_stats,
         "covariate_matrix": covariate_matrix,
         "used_covariates": used_covariates,

@@ -228,3 +228,139 @@ export function fitExponentialDecay(data: Array<{ x: number; y: number }>) {
     equation: `y = ${a.toFixed(2)} * e^(-${b.toFixed(4)}*x) + ${c.toFixed(2)}`,
   };
 }
+
+/**
+ * Fit a Lorentz (Cauchy-Lorentzian) curve to data points
+ * Model: y = A / (1 + ((x - x0) / γ)²)
+ * Bell-shaped curve with peak at x0 - good for speed vs slope relationships
+ * Based on research showing Lorentz curves fit hiking speed-slope data well
+ */
+export function fitLorentzCurve(
+  data: Array<{ x: number; y: number }>,
+  options?: {
+    x0Range?: [number, number];
+    gammaRange?: [number, number];
+  }
+) {
+  if (data.length < 10) {
+    return null;
+  }
+
+  // Filter out invalid points (allow negative x for slope data)
+  const validData = data.filter(d =>
+    isFinite(d.x) && isFinite(d.y) && d.y >= 0
+  );
+
+  if (validData.length < 10) {
+    return null;
+  }
+
+  const xValues = validData.map(d => d.x);
+  const yValues = validData.map(d => d.y);
+  const xMin = Math.min(...xValues);
+  const xMax = Math.max(...xValues);
+
+  // Default parameter ranges (suitable for slope in degrees)
+  const x0Range = options?.x0Range || [-15, 10];
+  const gammaRange = options?.gammaRange || [3, 40];
+
+  // For fixed (x0, gamma), y = A * basis(x) is linear in A - solve via OLS
+  const solveForA = (x0: number, gamma: number) => {
+    let sumBasisSq = 0;
+    let sumBasisY = 0;
+    for (const point of validData) {
+      const basis = 1 / (1 + Math.pow((point.x - x0) / gamma, 2));
+      sumBasisSq += basis * basis;
+      sumBasisY += basis * point.y;
+    }
+    if (sumBasisSq < 1e-12) {
+      return null;
+    }
+    const A = sumBasisY / sumBasisSq;
+    if (A <= 0) {
+      return null; // A must be positive
+    }
+    let sse = 0;
+    for (const point of validData) {
+      const basis = 1 / (1 + Math.pow((point.x - x0) / gamma, 2));
+      const residual = A * basis - point.y;
+      sse += residual * residual;
+    }
+    return { A, sse };
+  };
+
+  // 2D grid search over (x0, gamma)
+  const searchGrid = (
+    x0Min: number,
+    x0Max: number,
+    x0Count: number,
+    gammaMin: number,
+    gammaMax: number,
+    gammaCount: number
+  ) => {
+    let best: { x0: number; gamma: number; A: number; sse: number } | null = null;
+
+    // Linear spacing for x0 (can be negative)
+    const x0Step = (x0Max - x0Min) / (x0Count - 1);
+    for (let i = 0; i < x0Count; i++) {
+      const x0 = x0Min + i * x0Step;
+
+      // Log spacing for gamma (must be positive)
+      for (const gamma of logSpace(gammaMin, gammaMax, gammaCount)) {
+        const result = solveForA(x0, gamma);
+        if (result && isFinite(result.sse) && (!best || result.sse < best.sse)) {
+          best = { x0, gamma, A: result.A, sse: result.sse };
+        }
+      }
+    }
+    return best;
+  };
+
+  // Coarse grid search
+  const coarse = searchGrid(
+    x0Range[0], x0Range[1], 25,
+    gammaRange[0], gammaRange[1], 25
+  );
+
+  if (!coarse) {
+    return null;
+  }
+
+  // Fine grid around best point
+  const x0Margin = (x0Range[1] - x0Range[0]) / 25;
+  const gammaRatio = Math.pow(gammaRange[1] / gammaRange[0], 1 / 25);
+
+  const fine = searchGrid(
+    coarse.x0 - x0Margin, coarse.x0 + x0Margin, 15,
+    coarse.gamma / gammaRatio, coarse.gamma * gammaRatio, 15
+  );
+
+  const best = fine && fine.sse < coarse.sse ? fine : coarse;
+  const { A, x0, gamma } = best;
+
+  // Calculate R²
+  const yMean = yValues.reduce((sum, y) => sum + y, 0) / yValues.length;
+  let ssTotal = 0;
+  for (const point of validData) {
+    ssTotal += Math.pow(point.y - yMean, 2);
+  }
+  const rSquared = ssTotal > 0 ? Math.max(0, 1 - best.sse / ssTotal) : 0;
+
+  // Generate curve points spanning the data range
+  const numPoints = 100;
+  const xRange = xMax - xMin;
+  const step = xRange / numPoints;
+  const curvePoints = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const x = xMin + i * step;
+    const y = A / (1 + Math.pow((x - x0) / gamma, 2));
+    curvePoints.push({ x, y });
+  }
+
+  return {
+    parameters: { A, x0, gamma },
+    rSquared,
+    curvePoints,
+    equation: `y = ${A.toFixed(2)} / (1 + ((x - ${x0.toFixed(1)}) / ${gamma.toFixed(1)})²)`,
+  };
+}

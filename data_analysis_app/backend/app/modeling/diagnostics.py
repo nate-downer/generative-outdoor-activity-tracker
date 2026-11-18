@@ -6,21 +6,25 @@ across the segments in a group, its variance taken, and normalized against the s
 all terms' variances for that draw. The point estimate + credible interval reported per
 variable is the median / 5th-95th percentile of that share across draws.
 """
+import arviz as az
 import numpy as np
 import xarray as xr
 
 from .locomotion_model import SEGMENT_TYPES, EFFORT_SEGMENT_TYPES, _tod_harmonics
 
 VARIABLE_LABELS = {
-    "effort_factor": "Effort factor (distance + elevation)",
+    "distance_factor": "Distance (horizontal travel)",
+    "lorentz_factor": "Slope effect (Lorentz curve)",
     "load_ratio": "Load ratio (pack/body weight)",
     "terrain_factor_nontechnical": "Terrain factor",
     "cum_distance_prior_mi": "Cumulative distance so far",
     "cum_elevation_prior_ft": "Cumulative elevation so far",
+    "starting_elevation_ft": "Starting elevation",
     "tod_modifier": "Time of day",
     "activity_offset": "Activity-level variation",
     "total_distance_mi": "Total distance",
     "total_elevation_gain_ft": "Total elevation gain",
+    "max_elevation_ft": "Maximum elevation reached",
     "party_size": "Party size",
     "is_hiking": "Activity type: hiking",
     "is_running": "Activity type: running",
@@ -66,11 +70,27 @@ def _fit_summary_stats(predicted_vs_actual: list) -> dict:
     mean_actual_min = float(actual.mean())
     rmse_pct_of_mean = (rmse_min / mean_actual_min * 100) if mean_actual_min > 1e-12 else 0.0
 
-    return {
+    stats = {
         "r_squared": r_squared,
         "rmse_min": rmse_min,
         "rmse_pct_of_mean": rmse_pct_of_mean,
     }
+
+    # Compute separate validation statistics if there are validation points
+    validation_points = [p for p in predicted_vs_actual if p.get("is_validation", False)]
+    if validation_points:
+        val_actual = np.array([p["actual_min"] for p in validation_points])
+        val_predicted = np.array([p["predicted_min"] for p in validation_points])
+        val_residuals = val_actual - val_predicted
+        val_rmse_min = float(np.sqrt(np.mean(val_residuals ** 2)))
+        val_mean_actual_min = float(val_actual.mean())
+        val_rmse_pct = (val_rmse_min / val_mean_actual_min * 100) if val_mean_actual_min > 1e-12 else 0.0
+
+        stats["validation_rmse_min"] = val_rmse_min
+        stats["validation_rmse_pct_of_mean"] = val_rmse_pct
+        stats["n_validation_points"] = len(validation_points)
+
+    return stats
 
 
 def _variance_explained(term_vars: dict, term_coefs: dict) -> list:
@@ -101,12 +121,19 @@ def _variance_explained(term_vars: dict, term_coefs: dict) -> list:
     return rows
 
 
-def pooled_diagnostics(fit_result: dict) -> dict:
+def pooled_diagnostics(fit_result: dict, validation_ids: set = None) -> dict:
     """
     Diagnostics for the pooled locomotion model, keyed by segment_type_5 - same output
     shape per type as the old single_type_diagnostics, just sliced from one shared fit
     instead of coming from 5 separate fits.
+
+    Args:
+        fit_result: The fitted model result dictionary
+        validation_ids: Set of activity IDs that are in the validation sample (optional)
     """
+    if validation_ids is None:
+        validation_ids = set()
+
     idata = fit_result["idata"]
     df = fit_result["df"]
     covariate_matrix = fit_result["covariate_matrix"]
@@ -117,7 +144,6 @@ def pooled_diagnostics(fit_result: dict) -> dict:
 
     posterior = idata.posterior
     alpha_type_all = _flatten(posterior["alpha_type"])  # (S, n_types)
-    beta_type_all = _flatten(posterior["beta_type"])  # (S, n_types)
     gamma = _flatten(posterior["gamma"])  # (S, n_cov)
     tod_a1 = _flatten(posterior["tod_a1"])  # (S,)
     tod_b1 = _flatten(posterior["tod_b1"])
@@ -129,10 +155,12 @@ def pooled_diagnostics(fit_result: dict) -> dict:
     # slope for a composite sinusoid, so this stands in as its "coefficient".
     tod_amplitude = np.sqrt(tod_a1 ** 2 + tod_b1 ** 2 + tod_a2 ** 2 + tod_b2 ** 2)  # (S,)
 
-    log_effort_std = fit_result["log_effort_stats"].transform(df["log_effort"].to_numpy())
+    log_distance_std = fit_result["log_distance_stats"].transform(df["log_distance"].to_numpy())
+    lorentz_std = fit_result["lorentz_stats"].transform(df["lorentz_log_term"].to_numpy())
     sin1, cos1, sin2, cos2 = _tod_harmonics(df["hour_of_day"].to_numpy())
 
     segment_ids = df["segment_id"].to_numpy()
+    activity_ids_all = df["activity_id"].to_numpy()
     activity_names = df["activity_name"].to_numpy()
     duration_sec = df["duration_sec"].to_numpy()
 
@@ -163,16 +191,23 @@ def pooled_diagnostics(fit_result: dict) -> dict:
             "activity_offset": sigma_activity,
         }
 
-        # technical_climb/technical_descent have no effort term at all - their
+        # technical_climb/technical_descent have no distance/slope terms - their
         # duration comes entirely from the elevation_change_tech_*/
         # pitch_count_tech_climb covariates in the generic loop below.
         if type_name in EFFORT_SEGMENT_TYPES:
-            beta_t = beta_type_all[:, EFFORT_SEGMENT_TYPES.index(type_name)]  # (S,)
-            effort_term = beta_t[:, None] * log_effort_std[None, mask]  # (S, n_t)
-            term_vars["effort_factor"] = effort_term.var(axis=1)
-            term_coefs["effort_factor"] = beta_t
+            beta_distance = _flatten(posterior["beta_distance"])  # (S,) scalar samples
+            beta_lorentz = _flatten(posterior["beta_lorentz"])  # (S,) scalar samples
+
+            distance_term = beta_distance[:, None] * log_distance_std[None, mask]  # (S, n_t)
+            lorentz_term = beta_lorentz[:, None] * lorentz_std[None, mask]  # (S, n_t)
+
+            term_vars["distance_factor"] = distance_term.var(axis=1)
+            term_vars["lorentz_factor"] = lorentz_term.var(axis=1)
+            term_coefs["distance_factor"] = beta_distance
+            term_coefs["lorentz_factor"] = beta_lorentz
         else:
-            effort_term = 0.0
+            distance_term = 0.0
+            lorentz_term = 0.0
 
         for j in range(n_cov):
             # Covariate is a global, shared column, but many entries (climb
@@ -186,7 +221,7 @@ def pooled_diagnostics(fit_result: dict) -> dict:
             term_vars[used_covariates[j]] = cov_terms[:, :, j].var(axis=1)
             term_coefs[used_covariates[j]] = gamma[:, j]
 
-        mu = alpha_t[:, None] + effort_term + cov_terms.sum(axis=2) + tod_term + activity_term
+        mu = alpha_t[:, None] + distance_term + lorentz_term + cov_terms.sum(axis=2) + tod_term + activity_term
         predicted_min = np.exp(np.median(mu, axis=0)) / 60.0
         actual_min = duration_sec[mask] / 60.0
 
@@ -196,9 +231,10 @@ def pooled_diagnostics(fit_result: dict) -> dict:
                 "activity_name": str(aname),
                 "predicted_min": float(pmin),
                 "actual_min": float(amin),
+                "is_validation": str(aid) in validation_ids,
             }
-            for sid, aname, pmin, amin in zip(
-                segment_ids[mask], activity_names[mask], predicted_min, actual_min
+            for sid, aid, aname, pmin, amin in zip(
+                segment_ids[mask], activity_ids_all[mask], activity_names[mask], predicted_min, actual_min
             )
         ]
 
@@ -213,7 +249,17 @@ def pooled_diagnostics(fit_result: dict) -> dict:
     return out
 
 
-def rest_diagnostics(fit_result: dict) -> dict:
+def rest_diagnostics(fit_result: dict, validation_ids: set = None) -> dict:
+    """
+    Diagnostics for the rest time model.
+
+    Args:
+        fit_result: The fitted model result dictionary
+        validation_ids: Set of activity IDs that are in the validation sample (optional)
+    """
+    if validation_ids is None:
+        validation_ids = set()
+
     idata = fit_result["idata"]
     df = fit_result["df"]
     covariate_matrix = fit_result["covariate_matrix"]
@@ -259,6 +305,7 @@ def rest_diagnostics(fit_result: dict) -> dict:
             "activity_name": str(activity_names[k]),
             "predicted_min": float(predicted_min[k]),
             "actual_min": float(actual_min[k]),
+            "is_validation": str(activity_ids[k]) in validation_ids,
         }
         for k in range(len(df))
     ]

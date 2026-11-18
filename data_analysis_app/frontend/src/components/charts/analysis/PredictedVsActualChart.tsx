@@ -36,9 +36,35 @@ const CustomTooltip = ({ active, payload }: any) => {
   return null;
 };
 
+// Custom dot renderer for validation point styling
+const renderDot = (props: any, color: string) => {
+  const { cx, cy, payload } = props;
+  const isValidation = payload.isValidation;
+  const fillColor = isValidation ? '#1f2937' : color; // Dark gray for validation, default color for training
+  const radius = isValidation ? 5 : 4; // Slightly larger for validation
+
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={radius}
+      fill={fillColor}
+      fillOpacity={0.7}
+      stroke={fillColor}
+      strokeWidth={isValidation ? 1 : 0}
+    />
+  );
+};
+
 function PredictedVsActualChart({ data, color = '#ea580c' }: PredictedVsActualChartProps) {
   const { points, referenceLine, maxValue } = useMemo(() => {
-    const pts = data.map((d) => ({ x: d.actual_min, y: d.predicted_min, label: d.label, activityName: d.activity_name }));
+    const pts = data.map((d) => ({
+      x: d.actual_min,
+      y: d.predicted_min,
+      label: d.label,
+      activityName: d.activity_name,
+      isValidation: d.is_validation || false,
+    }));
     const max = pts.reduce((m, p) => Math.max(m, p.x, p.y), 0) * 1.05 || 1;
     return {
       points: pts,
@@ -93,7 +119,7 @@ function PredictedVsActualChart({ data, color = '#ea580c' }: PredictedVsActualCh
           isAnimationActive={false}
           legendType="none"
         />
-        <Scatter data={points} fill={color} fillOpacity={0.6} />
+        <Scatter data={points} shape={(props) => renderDot(props, color)} />
       </ComposedChart>
     </ResponsiveContainer>
   );
