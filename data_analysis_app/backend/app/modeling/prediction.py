@@ -238,6 +238,7 @@ def predict_route(
     )
     point_times = [p.time for p in points]
     point_elevations = [p.elevation_ft for p in points]
+    max_elevation_ft = max(point_elevations) if point_elevations else 0.0
 
     activity = db.query(models.Activity).filter(models.Activity.activity_id == activity_id).first()
     timezone_str = activity.timezone if activity else None
@@ -279,6 +280,7 @@ def predict_route(
         "is_hiking": float(loco_df["is_hiking"].iloc[0]),
         "is_running": float(loco_df["is_running"].iloc[0]),
         "pct_technical_elevation_gain": pct_technical_elevation_gain,
+        "max_elevation_ft": max_elevation_ft,
     }
     rest_draws_min = predict_rest_duration_draws(
         rest_trace, rest_meta, total_distance_mi, total_elevation_gain_ft, rest_raw_covariates,
